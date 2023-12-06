@@ -1,6 +1,6 @@
 # PowerPaint
 
-PowerPaint is a powerful image generation tool that leverages the capabilities of deep learning models. This README provides a step-by-step guide to download the repository, set up the required environment, and run PowerPaint with or without ControlNet.
+PowerPaint is a powerful image generation tool that leverages the capabilities of deep learning models. This README provides a step-by-step guide to download the repository, set up the required virtual environment named "PowerPaint" using conda, and run PowerPaint with or without ControlNet.
 
 ## Getting Started
 
@@ -18,6 +18,23 @@ Enter the cloned repository directory:
 
 ```bash
 cd PowerPaint
+```
+
+### Create Virtual Environment with Conda
+
+Create and activate a virtual environment named "PowerPaint" using conda:
+
+```bash
+conda create --name PowerPaint python=3.8
+conda activate PowerPaint
+```
+
+### Install Dependencies
+
+Install the required dependencies from the `requirements.txt` file:
+
+```bash
+pip install -r requirements.txt
 ```
 
 ### Create Models Folder
