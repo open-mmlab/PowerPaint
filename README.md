@@ -90,3 +90,8 @@ Feel free to explore and create stunning images with PowerPaint!
 ## Contributors
 
 ## License
+
+## Research Paper Integration
+**Paper Title**: A Task is Worth One Word: Learning with Task Prompts for High-Quality Versatile Image Inpainting
+
+**ArXiv Link**: https://arxiv.org/abs/2312.03594
