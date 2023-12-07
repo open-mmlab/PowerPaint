@@ -2,7 +2,11 @@
 
 This README provides a step-by-step guide to download the repository, set up the required virtual environment named "PowerPaint" using conda, and run PowerPaint with or without ControlNet. 
 
-Homepage: https://powerpaint.github.io/
+**Homepage**: https://powerpaint.github.io/
+
+**Paper Title**: A Task is Worth One Word: Learning with Task Prompts for High-Quality Versatile Image Inpainting
+
+**ArXiv Link**: https://arxiv.org/abs/2312.03594
 
 **Stronger Model Weights and Online Demo Coming Soon！**
 
@@ -91,7 +95,3 @@ Feel free to explore and create stunning images with PowerPaint!
 
 ## License
 
-## Research Paper Integration
-**Paper Title**: A Task is Worth One Word: Learning with Task Prompts for High-Quality Versatile Image Inpainting
-
-**ArXiv Link**: https://arxiv.org/abs/2312.03594
