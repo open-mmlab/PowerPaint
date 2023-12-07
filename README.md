@@ -89,7 +89,16 @@ This command will launch the Gradio interface for PowerPaint with ControlNet.
 
 Feel free to explore and create stunning images with PowerPaint!
 
-## Contributors
+## BibTeX
 
-## License
+```
+@misc{zhuang2023task,
+      title={A Task is Worth One Word: Learning with Task Prompts for High-Quality Versatile Image Inpainting}, 
+      author={Junhao Zhuang and Yanhong Zeng and Wenran Liu and Chun Yuan and Kai Chen},
+      year={2023},
+      eprint={2312.03594},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV}
+}
+```
 
