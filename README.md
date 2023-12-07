@@ -1,6 +1,6 @@
 # PowerPaint
 
-PowerPaint is a powerful image editing tool that leverages the capabilities of deep learning models. This README provides a step-by-step guide to download the repository, set up the required virtual environment named "PowerPaint" using conda, and run PowerPaint with or without ControlNet.
+This README provides a step-by-step guide to download the repository, set up the required virtual environment named "PowerPaint" using conda, and run PowerPaint with or without ControlNet.## Improved Model Weights and Online Demo Coming Soon
 
 ## Getting Started
 
