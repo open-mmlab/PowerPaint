@@ -8,6 +8,8 @@ This README provides a step-by-step guide to download the repository, set up the
 
 <img src='fig/teaser.png'/>
 
+<img src='fig/flowchart_11_17.png'/>
+
 ## Getting Started
 
 ### Clone the Repository
