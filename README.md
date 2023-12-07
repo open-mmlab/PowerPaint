@@ -2,6 +2,8 @@
 
 This README provides a step-by-step guide to download the repository, set up the required virtual environment named "PowerPaint" using conda, and run PowerPaint with or without ControlNet. 
 
+Homepage: https://powerpaint.github.io/
+
 **Stronger Model Weights and Online Demo Coming Soon！**
 
 ## Getting Started
