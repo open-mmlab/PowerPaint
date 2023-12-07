@@ -15,7 +15,7 @@ This README provides a step-by-step guide to download the repository, set up the
 First, clone the PowerPaint repository from GitHub using the following command:
 
 ```bash
-git clone git@github.com:zhuang2002/PowerPaint.git
+git clone https://github.com/zhuang2002/PowerPaint.git
 ```
 
 ### Navigate to the Repository
