@@ -6,6 +6,8 @@ This README provides a step-by-step guide to download the repository, set up the
 
 **Stronger Model Weights and Online Demo Coming Soon！**
 
+<img src='fig/teaser.png'/>
+
 ## Getting Started
 
 ### Clone the Repository
