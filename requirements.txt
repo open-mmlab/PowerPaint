@@ -5,4 +5,5 @@ torch
 torchvision
 controlnet-aux==0.0.3
 transformers
-mmengine
+mmengine==0.8.5
+mmagic==1.1.0
