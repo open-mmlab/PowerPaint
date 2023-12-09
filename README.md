@@ -1,10 +1,10 @@
 # A Task is Worth One Word: Learning with Task Prompts for High-Quality Versatile Image Inpainting
 
-### [Project Page](https://powerpaint.github.io/) | [Paper](https://arxiv.org/abs/2312.03594)
+### [Project Page](https://powerpaint.github.io/) | [Paper](https://arxiv.org/abs/2312.03594) | [Online Demo(OpenXlab)](https://openxlab.org.cn/apps/detail/rangoliu/PowerPaint#basic-information)
 
 This README provides a step-by-step guide to download the repository, set up the required virtual environment named "PowerPaint" using conda, and run PowerPaint with or without ControlNet.
 
-**Stronger Model Weights and Online Demo Coming Soon！**
+**Stronger Model Weights Coming Soon！**
 
 <img src='https://github.com/open-mmlab/mmagic/assets/12782558/acd01391-c73f-4997-aafd-0869aebcc915'/>
 
@@ -12,10 +12,10 @@ This README provides a step-by-step guide to download the repository, set up the
 
 ```bash
 # Clone the Repository
-git clone https://github.com/zhuang2002/PowerPaint.git
+git clone https://github.com/open-mmlab/mmagic.git
 
 # Navigate to the Repository
-cd PowerPaint
+cd projects/powerpaint
 
 # Create Virtual Environment with Conda
 conda create --name PowerPaint python=3.9
