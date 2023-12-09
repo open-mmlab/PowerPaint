@@ -15,7 +15,7 @@ This README provides a step-by-step guide to download the repository, set up the
 git clone https://github.com/open-mmlab/mmagic.git
 
 # Navigate to the Repository
-cd projects/powerpaint
+cd PowerPaint
 
 # Create Virtual Environment with Conda
 conda create --name PowerPaint python=3.9
