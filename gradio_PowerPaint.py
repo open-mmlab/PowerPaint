@@ -33,8 +33,8 @@ add_tokens(
     placeholder_tokens=['P_ctxt', 'P_shape', 'P_obj'],
     initialize_tokens=['a', 'a', 'a'],
     num_vectors_per_token=10)
-from safetensors.torch import load_model
-load_model(pipe.unet, "./models/unet/diffusion_pytorch_model.safetensors")
+pipe.unet.load_state_dict(
+    torch.load('./models/unet/diffusion_pytorch_model.bin'), strict=False)
 pipe.text_encoder.load_state_dict(
     torch.load('./models/text_encoder/pytorch_model.bin'), strict=False)
 pipe = pipe.to('cuda')
@@ -460,10 +460,10 @@ with gr.Blocks(css='style.css') as demo:
                     label='Steps', minimum=1, maximum=50, value=45, step=1)
                 scale = gr.Slider(
                     label='Guidance Scale',
-                    info='it is recommended to set the value at 12 or above',
+                    info='For object removal and image outpainting, it is recommended to set the value at 12 or above',
                     minimum=0.1,
                     maximum=30.0,
-                    value=13,
+                    value=7.5,
                     step=0.1)
                 seed = gr.Slider(
                     label='Seed',
