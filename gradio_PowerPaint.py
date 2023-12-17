@@ -390,7 +390,7 @@ with gr.Blocks(css='style.css') as demo:
                     minimum=0,
                     maximum=1,
                     step=0.05,
-                    value=0.6,
+                    value=0.5,
                 )
                 control_type = gr.Radio(['canny', 'pose', 'depth', 'hed'],
                                         label='Control type')
