@@ -418,7 +418,7 @@ with gr.Blocks(css='style.css') as demo:
                 enable_object_removal = gr.Checkbox(
                     label='Enable image outpainting',
                     value=True,
-                    info='The recommended configuration for the Guidance Scale is 10 or above. \
+                    info='The recommended configuration for the Guidance Scale is 10 or higher. \
                     If unwanted random objects appear in the extended image region, \
                         you can enhance the cleanliness of the extension area by increasing the Guidance Scale.',
                     interactive=False)
