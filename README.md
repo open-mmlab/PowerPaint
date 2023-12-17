@@ -10,7 +10,7 @@ This README provides a step-by-step guide to download the repository, set up the
 
 *Enhanced PowerPaint Model*
 
-- We are delighted to announce the release of enhanced and more stable model weights. These refined weights can now be accessed on [Hugging Face](https://huggingface.co/JunhaoZhuang/PowerPaint-v1/tree/main). The `gradio_PowerPaint.py` file has also been updated as part of this release.
+- We are delighted to announce the release of more stable model weights. These refined weights can now be accessed on [Hugging Face](https://huggingface.co/JunhaoZhuang/PowerPaint-v1/tree/main). The `gradio_PowerPaint.py` file has also been updated as part of this release.
 
 
 ## Next
