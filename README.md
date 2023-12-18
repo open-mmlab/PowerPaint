@@ -6,7 +6,7 @@ This README provides a step-by-step guide to download the repository, set up the
 
 ## News
 
-**December 17, 2023**
+**December 18, 2023**
 
 *Enhanced PowerPaint Model*
 
