@@ -4,7 +4,7 @@
 
 This README provides a step-by-step guide to download the repository, set up the required virtual environment named "PowerPaint" using conda, and run PowerPaint with or without ControlNet.
 
-## News
+## 🚀 News
 
 **December 18, 2023**
 
