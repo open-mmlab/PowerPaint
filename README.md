@@ -14,7 +14,7 @@ This README provides a step-by-step guide to download the repository, set up the
 - 
 **December 22, 2023**
   
-- The logical error in loading ControlNet has been rectified. The `gradio_PowerPaint.py` file and [Online Demo](https://openxlab.org.cn/apps/detail/rangoliu/PowerPaint) have also been updated
+- The logical error in loading ControlNet has been rectified. The `gradio_PowerPaint.py` file and [Online Demo](https://openxlab.org.cn/apps/detail/rangoliu/PowerPaint) have also been updated.
 
 ## Next
 
