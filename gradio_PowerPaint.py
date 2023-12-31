@@ -34,8 +34,8 @@ add_tokens(
     num_vectors_per_token=10)
 
 from safetensors.torch import load_model
-load_model(pipe.unet, "./models/unet/diffusion_pytorch_model.safetensors")
-pipe.text_encoder.load_state_dict(torch.load("./models/text_encoder/pytorch_model.bin"), strict=False)
+load_model(pipe.unet, "./models/unet/unet.safetensors")
+load_model(pipe.text_encoder, "./models/unet/text_encoder.safetensors")
 pipe = pipe.to('cuda')
 
 
