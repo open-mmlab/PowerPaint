@@ -91,8 +91,8 @@ def add_task(prompt, negative_prompt, control_type):
     elif control_type == 'shape-guided':
         promptA = prompt + ' P_shape'
         promptB = prompt + ' P_ctxt'
-        negative_promptA = negative_prompt
-        negative_promptB = negative_prompt
+        negative_promptA = negative_prompt + ' P_shape'
+        negative_promptB = negative_prompt + ' P_ctxt'
     elif control_type == 'image-outpainting':
         promptA = prompt + ' P_ctxt'
         promptB = prompt + ' P_ctxt'
@@ -101,8 +101,8 @@ def add_task(prompt, negative_prompt, control_type):
     else:
         promptA = prompt + ' P_obj'
         promptB = prompt + ' P_obj'
-        negative_promptA = negative_prompt
-        negative_promptB = negative_prompt
+        negative_promptA = negative_prompt + ' P_obj'
+        negative_promptB = negative_prompt + ' P_obj'
 
     return promptA, promptB, negative_promptA, negative_promptB
 
