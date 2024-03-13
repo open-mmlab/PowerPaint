@@ -89,18 +89,18 @@ def add_task(prompt, negative_prompt, control_type):
         negative_promptA = negative_prompt + ' P_obj'
         negative_promptB = negative_prompt + ' P_obj'
     elif control_type == 'shape-guided':
-        promptA = prompt + ' high quality P_shape'
-        promptB = prompt + ' high quality P_ctxt'
-        negative_promptA = negative_prompt + ' worst quality, low quality, normal quality, bad quality, blurry P_shape'
-        negative_promptB = negative_prompt + ' worst quality, low quality, normal quality, bad quality, blurry P_ctxt'
+        promptA = prompt + ' P_shape'
+        promptB = prompt + ' P_ctxt'
+        negative_promptA = negative_prompt + ' P_shape'
+        negative_promptB = negative_prompt + ' P_ctxt'
     elif control_type == 'image-outpainting':
-        promptA = prompt + ' empty scenery high quality P_ctxt'
-        promptB = prompt + ' empty scenery high quality P_ctxt'
+        promptA = prompt + ' empty scene P_ctxt'
+        promptB = prompt + ' empty scene P_ctxt'
         negative_promptA = negative_prompt + ' P_obj'
         negative_promptB = negative_prompt + ' P_obj'
     else:
-        promptA = prompt + ' high quality P_obj'
-        promptB = prompt + ' high quality P_obj'
+        promptA = prompt + ' P_obj'
+        promptB = prompt + ' P_obj'
         negative_promptA = negative_prompt + ' worst quality, low quality, normal quality, bad quality, blurry P_obj'
         negative_promptB = negative_prompt + ' worst quality, low quality, normal quality, bad quality, blurry P_obj'
 
