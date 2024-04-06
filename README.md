@@ -8,20 +8,21 @@ This README provides a step-by-step guide to download the repository, set up the
 
 ## 🚀 News
 
+**April 6, 2024**:fire:
+
+- We have retrained a new PowerPaint, taking inspiration from Brushnet. The [Online Demo](https://openxlab.org.cn/apps/detail/rangoliu/PowerPaint) has been updated accordingly. **We plan to release the model weights and code as open source in the next few days**.
+- Tips: We preserve the cross-attention layer that was deleted by BrushNet for the task prompts input.
+
+**December 22, 2023**:wrench:
+  
+- The logical error in loading ControlNet has been rectified. The `gradio_PowerPaint.py` file and [Online Demo](https://openxlab.org.cn/apps/detail/rangoliu/PowerPaint) have also been updated.
+
 **December 18, 2023**
 
 *Enhanced PowerPaint Model*
 
 - We are delighted to announce the release of more stable model weights. These refined weights can now be accessed on [Hugging Face](https://huggingface.co/JunhaoZhuang/PowerPaint-v1/tree/main). The `gradio_PowerPaint.py` file and [Online Demo](https://openxlab.org.cn/apps/detail/rangoliu/PowerPaint) have also been updated as part of this release.
-  
-**December 22, 2023**:wrench:
-  
-- The logical error in loading ControlNet has been rectified. The `gradio_PowerPaint.py` file and [Online Demo](https://openxlab.org.cn/apps/detail/rangoliu/PowerPaint) have also been updated.
-  
-**April 6, 2024**:fire:
 
-- We have retrained a new PowerPaint, taking inspiration from Brushnet. The [Online Demo](https://openxlab.org.cn/apps/detail/rangoliu/PowerPaint) has been updated accordingly. **We plan to release the model weights and code as open source in the next few days**.
-- Tips: We preserve the cross-attention layer that was deleted by BrushNet for the task prompts input.
   
 
 ________________
