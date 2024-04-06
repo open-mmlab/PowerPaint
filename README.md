@@ -20,7 +20,7 @@ This README provides a step-by-step guide to download the repository, set up the
   
 **April 6, 2024**:fire:
 
-- We have retrained a new PowerPaint, taking inspiration from Brushnet. The [Online Demo](https://openxlab.org.cn/apps/detail/rangoliu/PowerPaint) has been updated accordingly. **We plan to release the model weights as open source in the next few days**.
+- We have retrained a new PowerPaint, taking inspiration from Brushnet. The [Online Demo](https://openxlab.org.cn/apps/detail/rangoliu/PowerPaint) has been updated accordingly. **We plan to release the model weights and code as open source in the next few days**.
 - Tips: We preserve the cross-attention layer that was deleted by BrushNet for the task prompts input.
   
 
