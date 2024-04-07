@@ -10,7 +10,7 @@ This README provides a step-by-step guide to download the repository, set up the
 
 **April 7, 2024**:fire:
 
-- We open source the model weights and code for PowerPaint v2. [OpenXLab](https://openxlab.org.cn/models/detail/zhuangjunhao/PowerPaint_v2)
+- We open source the model weights and code for PowerPaint v2. [![Open in OpenXLab](https://cdn-static.openxlab.org.cn/header/openxlab_models.svg)](https://openxlab.org.cn/models/detail/zhuangjunhao/PowerPaint_v2)
 
 **April 6, 2024**:fire:
 
