@@ -8,6 +8,10 @@ This README provides a step-by-step guide to download the repository, set up the
 
 ## 🚀 News
 
+**April 7, 2024**:fire:
+
+- We open source the model weights and code for PowerPaint v2. [OpenXLab](https://openxlab.org.cn/models/detail/zhuangjunhao/PowerPaint_v2)
+
 **April 6, 2024**:fire:
 
 - We have retrained a new PowerPaint, taking inspiration from Brushnet. The [Online Demo](https://openxlab.org.cn/apps/detail/rangoliu/PowerPaint) has been updated accordingly. **We plan to release the model weights and code as open source in the next few days**.
@@ -48,7 +52,16 @@ conda activate PowerPaint
 
 # Install Dependencies
 pip install -r requirements.txt
+```
+## PowerPaint v2
 
+```bash
+python gradio_PowerPaint_BrushNet.py
+```
+
+## PowerPaint v1
+
+```bash
 # Create Models Folder
 mkdir models
 
@@ -57,19 +70,13 @@ git lfs install
 
 # Clone PowerPaint Model
 git lfs clone https://huggingface.co/JunhaoZhuang/PowerPaint-v1/ ./models
-```
 
-## Run PowerPaint
-
-To run PowerPaint, execute the following command:
-
-```bash
 python gradio_PowerPaint.py
 ```
 
 This command will launch the Gradio interface for PowerPaint.
 
-Feel free to explore and create stunning images with PowerPaint!
+Feel free to explore and edit images with PowerPaint!
 
 ## BibTeX
 
