@@ -1,9 +1,9 @@
-diffusers==0.23.1
+diffusers==0.24.0
 opencv-python
 gradio==3.41.0
 torch
 torchvision
 controlnet-aux==0.0.3
 transformers==4.28.0
-mmengine==0.8.5
-mmagic==1.1.0
+mmengine
+accelerate
