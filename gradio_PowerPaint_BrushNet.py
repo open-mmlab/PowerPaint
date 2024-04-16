@@ -106,6 +106,7 @@ def add_task(control_type):
 
 def predict(input_image, prompt, fitting_degree, ddim_steps, scale, seed,
             negative_prompt, task,vertical_expansion_ratio,horizontal_expansion_ratio):
+    input_image = {'image':input_image['background'], 'mask':input_image['layers'][0]}
     size1, size2 = input_image['image'].convert('RGB').size
 
     if task!='image-outpainting':
@@ -160,8 +161,8 @@ def predict(input_image, prompt, fitting_degree, ddim_steps, scale, seed,
     input_image['image'] = input_image['image'].resize((H, W))
     input_image['mask'] = input_image['mask'].resize((H, W))
 
-    np_inpimg = np.array(input_image['image'])
-    np_inmask = np.array(input_image['mask'])/255.0
+    np_inpimg = np.array(input_image['image'])[:, :, :3]
+    np_inmask = np.array(input_image['mask'])[:, :, :3]/255.0
 
     np_inpimg = np_inpimg*(1-np_inmask)
 
@@ -281,7 +282,7 @@ with gr.Blocks(css='style.css') as demo:
     with gr.Row():
         with gr.Column():
             gr.Markdown('### Input image and draw mask')
-            input_image = gr.Image(source='upload', tool='sketch', type='pil')
+            input_image = gr.ImageEditor(type='pil')
 
             task = gr.Radio(['text-guided', 'object-removal', 'shape-guided', 'image-outpainting'],
                             show_label=False,
