@@ -124,10 +124,7 @@ else:
     ]
     _import_structure["blip_diffusion"] = ["BlipDiffusionPipeline"]
     _import_structure["brushnet"].extend(
-        [
-            "StableDiffusionBrushNetPipeline",
-            "StableDiffusionBrushNetPowerPaintPipeline"
-        ]
+        ["StableDiffusionBrushNetPipeline", "StableDiffusionBrushNetPowerPaintPipeline"]
     )
     _import_structure["controlnet"].extend(
         [
@@ -369,8 +366,7 @@ if TYPE_CHECKING or DIFFUSERS_SLOW_IMPORT:
             AudioLDM2UNet2DConditionModel,
         )
         from .blip_diffusion import BlipDiffusionPipeline
-        from .brushnet import StableDiffusionBrushNetPipeline
-        from .brushnet import StableDiffusionBrushNetPowerPaintPipeline
+        from .brushnet import StableDiffusionBrushNetPipeline, StableDiffusionBrushNetPowerPaintPipeline
         from .controlnet import (
             BlipDiffusionControlNetPipeline,
             StableDiffusionControlNetImg2ImgPipeline,

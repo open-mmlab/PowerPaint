@@ -1,20 +1,23 @@
 import inspect
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+import sys
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import numpy as np
 import PIL.Image
 import torch
 import torch.nn.functional as F
-import sys  
-sys.path.append('..') 
+
+
+sys.path.append("..")
 from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTokenizer, CLIPVisionModelWithProjection
 
 from diffusers.image_processor import PipelineImageInput, VaeImageProcessor
 from diffusers.loaders import FromSingleFileMixin, IPAdapterMixin, LoraLoaderMixin, TextualInversionLoaderMixin
-from model.diffusers_c.models import ImageProjection,UNet2DConditionModel
 from diffusers.models import AutoencoderKL
-from model.BrushNet_CA import BrushNetModel
 from diffusers.models.lora import adjust_lora_scale_text_encoder
+from diffusers.pipelines.pipeline_utils import DiffusionPipeline
+from diffusers.pipelines.stable_diffusion.pipeline_output import StableDiffusionPipelineOutput
+from diffusers.pipelines.stable_diffusion.safety_checker import StableDiffusionSafetyChecker
 from diffusers.schedulers import KarrasDiffusionSchedulers
 from diffusers.utils import (
     USE_PEFT_BACKEND,
@@ -25,10 +28,9 @@ from diffusers.utils import (
     unscale_lora_layers,
 )
 from diffusers.utils.torch_utils import is_compiled_module, is_torch_version, randn_tensor
+from model.BrushNet_CA import BrushNetModel
+from model.diffusers_c.models import ImageProjection, UNet2DConditionModel
 from model.diffusers_c.pipelines.pipeline_utils import StableDiffusionMixin
-from diffusers.pipelines.pipeline_utils import DiffusionPipeline
-from diffusers.pipelines.stable_diffusion.pipeline_output import StableDiffusionPipelineOutput
-from diffusers.pipelines.stable_diffusion.safety_checker import StableDiffusionSafetyChecker
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -73,10 +75,10 @@ EXAMPLE_DOC_STRING = """
         generator = torch.Generator("cuda").manual_seed(1234)
 
         image = pipe(
-            caption, 
-            init_image, 
-            mask_image, 
-            num_inference_steps=50, 
+            caption,
+            init_image,
+            mask_image,
+            num_inference_steps=50,
             generator=generator,
             paintingnet_conditioning_scale=1.0
         ).images[0]
@@ -213,7 +215,7 @@ class StableDiffusionPowerPaintBrushNetPipeline(
         self.register_modules(
             vae=vae,
             text_encoder=text_encoder,
-            text_encoder_brushnet = text_encoder_brushnet,
+            text_encoder_brushnet=text_encoder_brushnet,
             tokenizer=tokenizer,
             unet=unet,
             brushnet=brushnet,
@@ -237,7 +239,7 @@ class StableDiffusionPowerPaintBrushNetPipeline(
         do_classifier_free_guidance,
         negative_promptA=None,
         negative_promptB=None,
-        t_nag = None,
+        t_nag=None,
         prompt_embeds: Optional[torch.FloatTensor] = None,
         negative_prompt_embeds: Optional[torch.FloatTensor] = None,
         lora_scale: Optional[float] = None,
@@ -272,7 +274,7 @@ class StableDiffusionPowerPaintBrushNetPipeline(
         # function of text encoder can correctly access it
         if lora_scale is not None and isinstance(self, LoraLoaderMixin):
             self._lora_scale = lora_scale
-        
+
         prompt = promptA
         negative_prompt = negative_promptA
 
@@ -317,7 +319,10 @@ class StableDiffusionPowerPaintBrushNetPipeline(
                     f" {self.tokenizer.model_max_length} tokens: {removed_text}"
                 )
 
-            if hasattr(self.text_encoder_brushnet.config, "use_attention_mask") and self.text_encoder_brushnet.config.use_attention_mask:
+            if (
+                hasattr(self.text_encoder_brushnet.config, "use_attention_mask")
+                and self.text_encoder_brushnet.config.use_attention_mask
+            ):
                 attention_mask = text_inputsA.attention_mask.to(device)
             else:
                 attention_mask = None
@@ -337,7 +342,7 @@ class StableDiffusionPowerPaintBrushNetPipeline(
                 attention_mask=attention_mask,
             )
             prompt_embedsB = prompt_embedsB[0]
-            prompt_embeds = prompt_embedsA*(t)+(1-t)*prompt_embedsB
+            prompt_embeds = prompt_embedsA * (t) + (1 - t) * prompt_embedsB
             # print("prompt_embeds: ",prompt_embeds)
 
         if self.text_encoder_brushnet is not None:
@@ -400,7 +405,10 @@ class StableDiffusionPowerPaintBrushNetPipeline(
                 return_tensors="pt",
             )
 
-            if hasattr(self.text_encoder_brushnet.config, "use_attention_mask") and self.text_encoder_brushnet.config.use_attention_mask:
+            if (
+                hasattr(self.text_encoder_brushnet.config, "use_attention_mask")
+                and self.text_encoder_brushnet.config.use_attention_mask
+            ):
                 attention_mask = uncond_inputA.attention_mask.to(device)
             else:
                 attention_mask = None
@@ -413,7 +421,7 @@ class StableDiffusionPowerPaintBrushNetPipeline(
                 uncond_inputB.input_ids.to(device),
                 attention_mask=attention_mask,
             )
-            negative_prompt_embeds = negative_prompt_embedsA[0]*(t_nag)+(1-t_nag)*negative_prompt_embedsB[0]
+            negative_prompt_embeds = negative_prompt_embedsA[0] * (t_nag) + (1 - t_nag) * negative_prompt_embedsB[0]
 
             # negative_prompt_embeds = negative_prompt_embeds[0]
 
@@ -1272,8 +1280,6 @@ class StableDiffusionPowerPaintBrushNetPipeline(
             lora_scale=text_encoder_lora_scale,
         )
 
-
-
         if ip_adapter_image is not None or ip_adapter_image_embeds is not None:
             image_embeds = self.prepare_ip_adapter_image_embeds(
                 ip_adapter_image,
@@ -1307,7 +1313,7 @@ class StableDiffusionPowerPaintBrushNetPipeline(
                 do_classifier_free_guidance=self.do_classifier_free_guidance,
                 guess_mode=guess_mode,
             )
-            original_mask=(original_mask.sum(1)[:,None,:,:] < 0).to(image.dtype)
+            original_mask = (original_mask.sum(1)[:, None, :, :] < 0).to(image.dtype)
             height, width = image.shape[-2:]
         else:
             assert False
@@ -1330,24 +1336,21 @@ class StableDiffusionPowerPaintBrushNetPipeline(
         )
 
         # 6.1 prepare condition latents
-        from torchvision import transforms
         # mask_i = transforms.ToPILImage()(image[0:1,:,:,:].squeeze(0))
         # mask_i.save('_mask.png')
         # print(brushnet.dtype)
-        conditioning_latents=self.vae.encode(image.to(device=device, dtype=brushnet.dtype)).latent_dist.sample() * self.vae.config.scaling_factor
+        conditioning_latents = (
+            self.vae.encode(image.to(device=device, dtype=brushnet.dtype)).latent_dist.sample()
+            * self.vae.config.scaling_factor
+        )
         mask = torch.nn.functional.interpolate(
-                    original_mask, 
-                    size=(
-                        conditioning_latents.shape[-2], 
-                        conditioning_latents.shape[-1]
-                    )
-                )
-        conditioning_latents = torch.concat([conditioning_latents,mask],1)
+            original_mask, size=(conditioning_latents.shape[-2], conditioning_latents.shape[-1])
+        )
+        conditioning_latents = torch.concat([conditioning_latents, mask], 1)
         # image = self.vae.decode(conditioning_latents[:1,:4,:,:] / self.vae.config.scaling_factor, return_dict=False, generator=generator)[0]
         # from torchvision import transforms
         # mask_i = transforms.ToPILImage()(image[0:1,:,:,:].squeeze(0)/2+0.5)
         # mask_i.save(str(timesteps[0])  +'_C.png')
-
 
         # 6.5 Optionally get Guidance Scale Embedding
         timestep_cond = None

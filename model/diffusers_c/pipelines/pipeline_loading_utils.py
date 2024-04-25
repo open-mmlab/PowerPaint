@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright 2024 The HuggingFace Inc. team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -415,7 +414,7 @@ def load_sub_model(
     load_method = getattr(class_obj, load_method_name)
 
     # add kwargs to loading method
-    diffusers_module = importlib.import_module(__name__.split(".")[0]+'.'+__name__.split(".")[1])
+    diffusers_module = importlib.import_module(__name__.split(".")[0] + "." + __name__.split(".")[1])
     loading_kwargs = {}
     if issubclass(class_obj, torch.nn.Module):
         loading_kwargs["torch_dtype"] = torch_dtype
@@ -480,7 +479,7 @@ def load_sub_model(
 
 def _fetch_class_library_tuple(module):
     # import it here to avoid circular import
-    diffusers_module = importlib.import_module(__name__.split(".")[0]+'.'+__name__.split(".")[1])
+    diffusers_module = importlib.import_module(__name__.split(".")[0] + "." + __name__.split(".")[1])
     pipelines = getattr(diffusers_module, "pipelines")
 
     # register the config from the original module, not the dynamo compiled one

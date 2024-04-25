@@ -27,6 +27,10 @@ from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTokenizer
 from diffusers.image_processor import VaeImageProcessor
 from diffusers.loaders import FromSingleFileMixin, LoraLoaderMixin, TextualInversionLoaderMixin
 from diffusers.models import AutoencoderKL, ControlNetModel, UNet2DConditionModel
+from diffusers.pipelines.controlnet import MultiControlNetModel
+from diffusers.pipelines.pipeline_utils import DiffusionPipeline
+from diffusers.pipelines.stable_diffusion import StableDiffusionPipelineOutput
+from diffusers.pipelines.stable_diffusion.safety_checker import StableDiffusionSafetyChecker
 from diffusers.schedulers import KarrasDiffusionSchedulers
 from diffusers.utils import (
     is_accelerate_available,
@@ -34,13 +38,7 @@ from diffusers.utils import (
     logging,
     replace_example_docstring,
 )
-from diffusers.utils.torch_utils import randn_tensor,is_compiled_module
-from diffusers.pipelines.pipeline_utils import DiffusionPipeline
-from diffusers.pipelines.stable_diffusion import StableDiffusionPipelineOutput
-from diffusers.pipelines.stable_diffusion.safety_checker import StableDiffusionSafetyChecker
-from diffusers.pipelines.controlnet import MultiControlNetModel
-
-
+from diffusers.utils.torch_utils import is_compiled_module, randn_tensor
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -270,6 +268,7 @@ class StableDiffusionControlNetInpaintPipeline(
         feature_extractor ([`CLIPImageProcessor`]):
             Model that extracts features from generated images to be used as inputs for the `safety_checker`.
     """
+
     _optional_components = ["safety_checker", "feature_extractor"]
 
     def __init__(
@@ -394,7 +393,7 @@ class StableDiffusionControlNetInpaintPipeline(
         do_classifier_free_guidance,
         negative_promptA=None,
         negative_promptB=None,
-        t_nag = None,
+        t_nag=None,
         prompt_embeds: Optional[torch.FloatTensor] = None,
         negative_prompt_embeds: Optional[torch.FloatTensor] = None,
         lora_scale: Optional[float] = None,
@@ -429,7 +428,7 @@ class StableDiffusionControlNetInpaintPipeline(
         # function of text encoder can correctly access it
         if lora_scale is not None and isinstance(self, LoraLoaderMixin):
             self._lora_scale = lora_scale
-        
+
         prompt = promptA
         negative_prompt = negative_promptA
 
@@ -494,7 +493,7 @@ class StableDiffusionControlNetInpaintPipeline(
                 attention_mask=attention_mask,
             )
             prompt_embedsB = prompt_embedsB[0]
-            prompt_embeds = prompt_embedsA*(t)+(1-t)*prompt_embedsB
+            prompt_embeds = prompt_embedsA * (t) + (1 - t) * prompt_embedsB
             # print("prompt_embeds: ",prompt_embeds)
 
         if self.text_encoder is not None:
@@ -570,7 +569,7 @@ class StableDiffusionControlNetInpaintPipeline(
                 uncond_inputB.input_ids.to(device),
                 attention_mask=attention_mask,
             )
-            negative_prompt_embeds = negative_prompt_embedsA[0]*(t_nag)+(1-t_nag)*negative_prompt_embedsB[0]
+            negative_prompt_embeds = negative_prompt_embedsA[0] * (t_nag) + (1 - t_nag) * negative_prompt_embedsB[0]
 
             # negative_prompt_embeds = negative_prompt_embeds[0]
 
@@ -992,7 +991,7 @@ class StableDiffusionControlNetInpaintPipeline(
         image_latents = self.vae.config.scaling_factor * image_latents
 
         return image_latents
-    
+
     @torch.no_grad()
     def predict_woControl(
         self,
@@ -1274,12 +1273,12 @@ class StableDiffusionControlNetInpaintPipeline(
                 # predict the noise residual
                 if task_class is not None:
                     noise_pred = self.unet(
-                        sample = latent_model_input,
-                        timestep = t,
+                        sample=latent_model_input,
+                        timestep=t,
                         encoder_hidden_states=prompt_embeds,
                         cross_attention_kwargs=cross_attention_kwargs,
                         return_dict=False,
-                        task_class = task_class,
+                        task_class=task_class,
                     )[0]
                 else:
                     noise_pred = self.unet(
@@ -1345,7 +1344,6 @@ class StableDiffusionControlNetInpaintPipeline(
             return (image, has_nsfw_concept)
 
         return StableDiffusionPipelineOutput(images=image, nsfw_content_detected=has_nsfw_concept)
-
 
     @torch.no_grad()
     @replace_example_docstring(EXAMPLE_DOC_STRING)
@@ -1491,7 +1489,7 @@ class StableDiffusionControlNetInpaintPipeline(
 
         prompt = promptA
         negative_prompt = negative_promptA
-        
+
         # align format for control guidance
         if not isinstance(control_guidance_start, list) and isinstance(control_guidance_end, list):
             control_guidance_start = len(control_guidance_end) * [control_guidance_start]
@@ -1499,9 +1497,10 @@ class StableDiffusionControlNetInpaintPipeline(
             control_guidance_end = len(control_guidance_start) * [control_guidance_end]
         elif not isinstance(control_guidance_start, list) and not isinstance(control_guidance_end, list):
             mult = len(controlnet.nets) if isinstance(controlnet, MultiControlNetModel) else 1
-            control_guidance_start, control_guidance_end = mult * [control_guidance_start], mult * [
-                control_guidance_end
-            ]
+            control_guidance_start, control_guidance_end = (
+                mult * [control_guidance_start],
+                mult * [control_guidance_end],
+            )
 
         # 1. Check inputs. Raise error if not correct
         self.check_inputs(
