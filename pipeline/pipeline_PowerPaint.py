@@ -20,16 +20,17 @@ import PIL
 import torch
 from packaging import version
 from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTokenizer
+
 from diffusers.configuration_utils import FrozenDict
 from diffusers.image_processor import VaeImageProcessor
 from diffusers.loaders import FromSingleFileMixin, LoraLoaderMixin, TextualInversionLoaderMixin
 from diffusers.models import AsymmetricAutoencoderKL, AutoencoderKL, UNet2DConditionModel
-from diffusers.schedulers import KarrasDiffusionSchedulers
-from diffusers.utils import deprecate, is_accelerate_available, is_accelerate_version, logging
-from diffusers.utils.torch_utils import randn_tensor
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipelineOutput
 from diffusers.pipelines.stable_diffusion.safety_checker import StableDiffusionSafetyChecker
+from diffusers.schedulers import KarrasDiffusionSchedulers
+from diffusers.utils import deprecate, is_accelerate_available, is_accelerate_version, logging
+from diffusers.utils.torch_utils import randn_tensor
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -185,6 +186,7 @@ class StableDiffusionInpaintPipeline(
         feature_extractor ([`~transformers.CLIPImageProcessor`]):
             A `CLIPImageProcessor` to extract features from generated images; used as inputs to the `safety_checker`.
     """
+
     _optional_components = ["safety_checker", "feature_extractor"]
 
     def __init__(
@@ -322,7 +324,7 @@ class StableDiffusionInpaintPipeline(
         do_classifier_free_guidance,
         negative_promptA=None,
         negative_promptB=None,
-        t_nag = None,
+        t_nag=None,
         prompt_embeds: Optional[torch.FloatTensor] = None,
         negative_prompt_embeds: Optional[torch.FloatTensor] = None,
         lora_scale: Optional[float] = None,
@@ -357,7 +359,7 @@ class StableDiffusionInpaintPipeline(
         # function of text encoder can correctly access it
         if lora_scale is not None and isinstance(self, LoraLoaderMixin):
             self._lora_scale = lora_scale
-        
+
         prompt = promptA
         negative_prompt = negative_promptA
 
@@ -422,7 +424,7 @@ class StableDiffusionInpaintPipeline(
                 attention_mask=attention_mask,
             )
             prompt_embedsB = prompt_embedsB[0]
-            prompt_embeds = prompt_embedsA*(t)+(1-t)*prompt_embedsB
+            prompt_embeds = prompt_embedsA * (t) + (1 - t) * prompt_embedsB
             # print("prompt_embeds: ",prompt_embeds)
 
         if self.text_encoder is not None:
@@ -498,7 +500,7 @@ class StableDiffusionInpaintPipeline(
                 uncond_inputB.input_ids.to(device),
                 attention_mask=attention_mask,
             )
-            negative_prompt_embeds = negative_prompt_embedsA[0]*(t_nag)+(1-t_nag)*negative_prompt_embedsB[0]
+            negative_prompt_embeds = negative_prompt_embedsA[0] * (t_nag) + (1 - t_nag) * negative_prompt_embedsB[0]
 
             # negative_prompt_embeds = negative_prompt_embeds[0]
 
@@ -1002,12 +1004,12 @@ class StableDiffusionInpaintPipeline(
                 # predict the noise residual
                 if task_class is not None:
                     noise_pred = self.unet(
-                        sample = latent_model_input,
-                        timestep = t,
+                        sample=latent_model_input,
+                        timestep=t,
                         encoder_hidden_states=prompt_embeds,
                         cross_attention_kwargs=cross_attention_kwargs,
                         return_dict=False,
-                        task_class = task_class,
+                        task_class=task_class,
                     )[0]
                 else:
                     noise_pred = self.unet(

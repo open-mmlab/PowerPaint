@@ -1,13 +1,13 @@
+import sys
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
-import sys 
-sys.path.append('.model') 
+
+
+sys.path.append(".model")
 import torch
 from torch import nn
-from torch.nn import functional as F
 
 from diffusers.configuration_utils import ConfigMixin, register_to_config
-from diffusers.utils import BaseOutput, logging
 from diffusers.models.attention_processor import (
     ADDED_KV_ATTENTION_PROCESSORS,
     CROSS_ATTENTION_PROCESSORS,
@@ -15,19 +15,22 @@ from diffusers.models.attention_processor import (
     AttnAddedKVProcessor,
     AttnProcessor,
 )
-from diffusers.models.embeddings import TextImageProjection, TextImageTimeEmbedding, TextTimeEmbedding, TimestepEmbedding, Timesteps
+from diffusers.models.embeddings import (
+    TextImageProjection,
+    TextImageTimeEmbedding,
+    TextTimeEmbedding,
+    TimestepEmbedding,
+    Timesteps,
+)
 from diffusers.models.modeling_utils import ModelMixin
+from diffusers.utils import BaseOutput, logging
 from model.diffusers_c.models.unets.unet_2d_blocks import (
     CrossAttnDownBlock2D,
     DownBlock2D,
-    UNetMidBlock2D,
-    UNetMidBlock2DCrossAttn,
     get_down_block,
     get_mid_block,
     get_up_block,
-    MidBlock2D
 )
-
 from model.diffusers_c.models.unets.unet_2d_condition import UNet2DConditionModel
 
 
@@ -148,9 +151,12 @@ class BrushNetModel(ModelMixin, ConfigMixin):
             "CrossAttnDownBlock2D",
             "DownBlock2D",
         ),
-        mid_block_type: Optional[str] = "UNetMidBlock2DCrossAttn", 
+        mid_block_type: Optional[str] = "UNetMidBlock2DCrossAttn",
         up_block_types: Tuple[str, ...] = (
-            "UpBlock2D", "CrossAttnUpBlock2D", "CrossAttnUpBlock2D", "CrossAttnUpBlock2D"
+            "UpBlock2D",
+            "CrossAttnUpBlock2D",
+            "CrossAttnUpBlock2D",
+            "CrossAttnUpBlock2D",
         ),
         only_cross_attention: Union[bool, Tuple[bool]] = False,
         block_out_channels: Tuple[int, ...] = (320, 640, 1280, 1280),
@@ -217,7 +223,10 @@ class BrushNetModel(ModelMixin, ConfigMixin):
         conv_in_kernel = 3
         conv_in_padding = (conv_in_kernel - 1) // 2
         self.conv_in_condition = nn.Conv2d(
-            in_channels+conditioning_channels, block_out_channels[0], kernel_size=conv_in_kernel, padding=conv_in_padding
+            in_channels + conditioning_channels,
+            block_out_channels[0],
+            kernel_size=conv_in_kernel,
+            padding=conv_in_padding,
         )
 
         # time
@@ -369,19 +378,19 @@ class BrushNetModel(ModelMixin, ConfigMixin):
         self.brushnet_mid_block = brushnet_block
 
         self.mid_block = get_mid_block(
-                mid_block_type,
-                transformer_layers_per_block=transformer_layers_per_block[-1],
-                in_channels=mid_block_channel,
-                temb_channels=time_embed_dim,
-                resnet_eps=norm_eps,
-                resnet_act_fn=act_fn,
-                output_scale_factor=mid_block_scale_factor,
-                resnet_time_scale_shift=resnet_time_scale_shift,
-                cross_attention_dim=cross_attention_dim,
-                num_attention_heads=num_attention_heads[-1],
-                resnet_groups=norm_num_groups,
-                use_linear_projection=use_linear_projection,
-                upcast_attention=upcast_attention,
+            mid_block_type,
+            transformer_layers_per_block=transformer_layers_per_block[-1],
+            in_channels=mid_block_channel,
+            temb_channels=time_embed_dim,
+            resnet_eps=norm_eps,
+            resnet_act_fn=act_fn,
+            output_scale_factor=mid_block_scale_factor,
+            resnet_time_scale_shift=resnet_time_scale_shift,
+            cross_attention_dim=cross_attention_dim,
+            num_attention_heads=num_attention_heads[-1],
+            resnet_groups=norm_num_groups,
+            use_linear_projection=use_linear_projection,
+            upcast_attention=upcast_attention,
         )
 
         # count how many layers upsample the images
@@ -390,11 +399,11 @@ class BrushNetModel(ModelMixin, ConfigMixin):
         # up
         reversed_block_out_channels = list(reversed(block_out_channels))
         reversed_num_attention_heads = list(reversed(num_attention_heads))
-        reversed_transformer_layers_per_block = (list(reversed(transformer_layers_per_block)))
+        reversed_transformer_layers_per_block = list(reversed(transformer_layers_per_block))
         only_cross_attention = list(reversed(only_cross_attention))
 
         output_channel = reversed_block_out_channels[0]
-        
+
         self.up_blocks = nn.ModuleList([])
         self.brushnet_up_blocks = nn.ModuleList([])
 
@@ -414,7 +423,7 @@ class BrushNetModel(ModelMixin, ConfigMixin):
 
             up_block = get_up_block(
                 up_block_type,
-                num_layers=layers_per_block+1,
+                num_layers=layers_per_block + 1,
                 transformer_layers_per_block=reversed_transformer_layers_per_block[i],
                 in_channels=input_channel,
                 out_channels=output_channel,
@@ -435,8 +444,8 @@ class BrushNetModel(ModelMixin, ConfigMixin):
             )
             self.up_blocks.append(up_block)
             prev_output_channel = output_channel
-            
-            for _ in range(layers_per_block+1):
+
+            for _ in range(layers_per_block + 1):
                 brushnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
                 brushnet_block = zero_module(brushnet_block)
                 self.brushnet_up_blocks.append(brushnet_block)
@@ -445,7 +454,6 @@ class BrushNetModel(ModelMixin, ConfigMixin):
                 brushnet_block = nn.Conv2d(output_channel, output_channel, kernel_size=1)
                 brushnet_block = zero_module(brushnet_block)
                 self.brushnet_up_blocks.append(brushnet_block)
-
 
     @classmethod
     def from_unet(
@@ -480,10 +488,12 @@ class BrushNetModel(ModelMixin, ConfigMixin):
             flip_sin_to_cos=unet.config.flip_sin_to_cos,
             freq_shift=unet.config.freq_shift,
             # down_block_types=['DownBlock2D','DownBlock2D','DownBlock2D','DownBlock2D'],
-            down_block_types=["CrossAttnDownBlock2D",
-            "CrossAttnDownBlock2D",
-            "CrossAttnDownBlock2D",
-            "DownBlock2D",],
+            down_block_types=[
+                "CrossAttnDownBlock2D",
+                "CrossAttnDownBlock2D",
+                "CrossAttnDownBlock2D",
+                "DownBlock2D",
+            ],
             # mid_block_type='MidBlock2D',
             mid_block_type="UNetMidBlock2DCrossAttn",
             # up_block_types=['UpBlock2D','UpBlock2D','UpBlock2D','UpBlock2D'],
@@ -515,11 +525,11 @@ class BrushNetModel(ModelMixin, ConfigMixin):
         )
 
         if load_weights_from_unet:
-            conv_in_condition_weight=torch.zeros_like(brushnet.conv_in_condition.weight)
-            conv_in_condition_weight[:,:4,...]=unet.conv_in.weight
-            conv_in_condition_weight[:,4:8,...]=unet.conv_in.weight
-            brushnet.conv_in_condition.weight=torch.nn.Parameter(conv_in_condition_weight)
-            brushnet.conv_in_condition.bias=unet.conv_in.bias
+            conv_in_condition_weight = torch.zeros_like(brushnet.conv_in_condition.weight)
+            conv_in_condition_weight[:, :4, ...] = unet.conv_in.weight
+            conv_in_condition_weight[:, 4:8, ...] = unet.conv_in.weight
+            brushnet.conv_in_condition.weight = torch.nn.Parameter(conv_in_condition_weight)
+            brushnet.conv_in_condition.bias = unet.conv_in.bias
 
             brushnet.time_proj.load_state_dict(unet.time_proj.state_dict())
             brushnet.time_embedding.load_state_dict(unet.time_embedding.state_dict())
@@ -527,9 +537,9 @@ class BrushNetModel(ModelMixin, ConfigMixin):
             if brushnet.class_embedding:
                 brushnet.class_embedding.load_state_dict(unet.class_embedding.state_dict())
 
-            brushnet.down_blocks.load_state_dict(unet.down_blocks.state_dict(),strict=False)
-            brushnet.mid_block.load_state_dict(unet.mid_block.state_dict(),strict=False)
-            brushnet.up_blocks.load_state_dict(unet.up_blocks.state_dict(),strict=False)
+            brushnet.down_blocks.load_state_dict(unet.down_blocks.state_dict(), strict=False)
+            brushnet.mid_block.load_state_dict(unet.mid_block.state_dict(), strict=False)
+            brushnet.up_blocks.load_state_dict(unet.up_blocks.state_dict(), strict=False)
 
         return brushnet.to(unet.dtype)
 
@@ -811,9 +821,8 @@ class BrushNetModel(ModelMixin, ConfigMixin):
         emb = emb + aug_emb if aug_emb is not None else emb
 
         # 2. pre-process
-        brushnet_cond=torch.concat([sample,brushnet_cond],1)
+        brushnet_cond = torch.concat([sample, brushnet_cond], 1)
         sample = self.conv_in_condition(brushnet_cond)
-
 
         # 3. down
         down_block_res_samples = (sample,)
@@ -837,7 +846,6 @@ class BrushNetModel(ModelMixin, ConfigMixin):
             down_block_res_sample = brushnet_down_block(down_block_res_sample)
             brushnet_down_block_res_samples = brushnet_down_block_res_samples + (down_block_res_sample,)
 
-
         # 5. mid
         if self.mid_block is not None:
             if hasattr(self.mid_block, "has_cross_attention") and self.mid_block.has_cross_attention:
@@ -853,7 +861,6 @@ class BrushNetModel(ModelMixin, ConfigMixin):
 
         # 6. BrushNet mid blocks
         brushnet_mid_block_res_sample = self.brushnet_mid_block(sample)
-
 
         # 7. up
         up_block_res_samples = ()
@@ -877,7 +884,7 @@ class BrushNetModel(ModelMixin, ConfigMixin):
                     cross_attention_kwargs=cross_attention_kwargs,
                     upsample_size=upsample_size,
                     attention_mask=attention_mask,
-                    return_res_samples=True
+                    return_res_samples=True,
                 )
             else:
                 sample, up_res_samples = upsample_block(
@@ -885,7 +892,7 @@ class BrushNetModel(ModelMixin, ConfigMixin):
                     temb=emb,
                     res_hidden_states_tuple=res_samples,
                     upsample_size=upsample_size,
-                    return_res_samples=True
+                    return_res_samples=True,
                 )
 
             up_block_res_samples += up_res_samples
@@ -898,17 +905,35 @@ class BrushNetModel(ModelMixin, ConfigMixin):
 
         # 6. scaling
         if guess_mode and not self.config.global_pool_conditions:
-            scales = torch.logspace(-1, 0, len(brushnet_down_block_res_samples) + 1 + len(brushnet_up_block_res_samples), device=sample.device)  # 0.1 to 1.0
+            scales = torch.logspace(
+                -1,
+                0,
+                len(brushnet_down_block_res_samples) + 1 + len(brushnet_up_block_res_samples),
+                device=sample.device,
+            )  # 0.1 to 1.0
             scales = scales * conditioning_scale
 
-            brushnet_down_block_res_samples = [sample * scale for sample, scale in zip(brushnet_down_block_res_samples, scales[:len(brushnet_down_block_res_samples)])]
-            brushnet_mid_block_res_sample = brushnet_mid_block_res_sample * scales[len(brushnet_down_block_res_samples)]
-            brushnet_up_block_res_samples = [sample * scale for sample, scale in zip(brushnet_up_block_res_samples, scales[len(brushnet_down_block_res_samples)+1:])]
+            brushnet_down_block_res_samples = [
+                sample * scale
+                for sample, scale in zip(
+                    brushnet_down_block_res_samples, scales[: len(brushnet_down_block_res_samples)]
+                )
+            ]
+            brushnet_mid_block_res_sample = (
+                brushnet_mid_block_res_sample * scales[len(brushnet_down_block_res_samples)]
+            )
+            brushnet_up_block_res_samples = [
+                sample * scale
+                for sample, scale in zip(
+                    brushnet_up_block_res_samples, scales[len(brushnet_down_block_res_samples) + 1 :]
+                )
+            ]
         else:
-            brushnet_down_block_res_samples = [sample * conditioning_scale for sample in brushnet_down_block_res_samples]
+            brushnet_down_block_res_samples = [
+                sample * conditioning_scale for sample in brushnet_down_block_res_samples
+            ]
             brushnet_mid_block_res_sample = brushnet_mid_block_res_sample * conditioning_scale
             brushnet_up_block_res_samples = [sample * conditioning_scale for sample in brushnet_up_block_res_samples]
-
 
         if self.config.global_pool_conditions:
             brushnet_down_block_res_samples = [
@@ -923,9 +948,9 @@ class BrushNetModel(ModelMixin, ConfigMixin):
             return (brushnet_down_block_res_samples, brushnet_mid_block_res_sample, brushnet_up_block_res_samples)
 
         return BrushNetOutput(
-            down_block_res_samples=brushnet_down_block_res_samples, 
+            down_block_res_samples=brushnet_down_block_res_samples,
             mid_block_res_sample=brushnet_mid_block_res_sample,
-            up_block_res_samples=brushnet_up_block_res_samples
+            up_block_res_samples=brushnet_up_block_res_samples,
         )
 
 

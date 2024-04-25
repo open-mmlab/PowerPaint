@@ -1386,7 +1386,7 @@ class CrossAttnDownBlock2D(nn.Module):
                 hidden_states = hidden_states + additional_residuals
 
             if down_block_add_samples is not None:
-                hidden_states = hidden_states + down_block_add_samples.pop(0) 
+                hidden_states = hidden_states + down_block_add_samples.pop(0)
 
             output_states = output_states + (hidden_states,)
 
@@ -1395,7 +1395,7 @@ class CrossAttnDownBlock2D(nn.Module):
                 hidden_states = downsampler(hidden_states, scale=lora_scale)
 
             if down_block_add_samples is not None:
-                hidden_states = hidden_states + down_block_add_samples.pop(0) # todo: add before or after
+                hidden_states = hidden_states + down_block_add_samples.pop(0)  # todo: add before or after
 
             output_states = output_states + (hidden_states,)
 
@@ -1455,7 +1455,10 @@ class DownBlock2D(nn.Module):
         self.gradient_checkpointing = False
 
     def forward(
-        self, hidden_states: torch.FloatTensor, temb: Optional[torch.FloatTensor] = None, scale: float = 1.0,
+        self,
+        hidden_states: torch.FloatTensor,
+        temb: Optional[torch.FloatTensor] = None,
+        scale: float = 1.0,
         down_block_add_samples: Optional[torch.FloatTensor] = None,
     ) -> Tuple[torch.FloatTensor, Tuple[torch.FloatTensor, ...]]:
         output_states = ()
@@ -1481,7 +1484,7 @@ class DownBlock2D(nn.Module):
                 hidden_states = resnet(hidden_states, temb, scale=scale)
 
             if down_block_add_samples is not None:
-                hidden_states = hidden_states + down_block_add_samples.pop(0) 
+                hidden_states = hidden_states + down_block_add_samples.pop(0)
 
             output_states = output_states + (hidden_states,)
 
@@ -2553,7 +2556,7 @@ class CrossAttnUpBlock2D(nn.Module):
         upsample_size: Optional[int] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         encoder_attention_mask: Optional[torch.FloatTensor] = None,
-        return_res_samples: Optional[bool]=False,
+        return_res_samples: Optional[bool] = False,
         up_block_add_samples: Optional[torch.FloatTensor] = None,
     ) -> torch.FloatTensor:
         lora_scale = cross_attention_kwargs.get("scale", 1.0) if cross_attention_kwargs is not None else 1.0
@@ -2564,7 +2567,7 @@ class CrossAttnUpBlock2D(nn.Module):
             and getattr(self, "b2", None)
         )
         if return_res_samples:
-            output_states=()
+            output_states = ()
 
         for resnet, attn in zip(self.resnets, self.attentions):
             # pop res hidden states
@@ -2624,7 +2627,7 @@ class CrossAttnUpBlock2D(nn.Module):
             if return_res_samples:
                 output_states = output_states + (hidden_states,)
             if up_block_add_samples is not None:
-                hidden_states = hidden_states + up_block_add_samples.pop(0) 
+                hidden_states = hidden_states + up_block_add_samples.pop(0)
 
         if self.upsamplers is not None:
             for upsampler in self.upsamplers:
@@ -2632,12 +2635,13 @@ class CrossAttnUpBlock2D(nn.Module):
             if return_res_samples:
                 output_states = output_states + (hidden_states,)
             if up_block_add_samples is not None:
-                hidden_states = hidden_states + up_block_add_samples.pop(0) 
-            
+                hidden_states = hidden_states + up_block_add_samples.pop(0)
+
         if return_res_samples:
             return hidden_states, output_states
         else:
             return hidden_states
+
 
 class UpBlock2D(nn.Module):
     def __init__(
@@ -2696,7 +2700,7 @@ class UpBlock2D(nn.Module):
         temb: Optional[torch.FloatTensor] = None,
         upsample_size: Optional[int] = None,
         scale: float = 1.0,
-        return_res_samples: Optional[bool]=False,
+        return_res_samples: Optional[bool] = False,
         up_block_add_samples: Optional[torch.FloatTensor] = None,
     ) -> torch.FloatTensor:
         is_freeu_enabled = (
@@ -2759,7 +2763,6 @@ class UpBlock2D(nn.Module):
                 output_states = output_states + (hidden_states,)
             if up_block_add_samples is not None:
                 hidden_states = hidden_states + up_block_add_samples.pop(0)  # todo: add before or after
-            
 
         if return_res_samples:
             return hidden_states, output_states

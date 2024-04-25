@@ -1,9 +1,9 @@
+accelerate
+controlnet-aux==0.0.3
 diffusers==0.24.0
-opencv-python
 gradio==3.41.0
+mmengine
+opencv-python
 torch
 torchvision
-controlnet-aux==0.0.3
 transformers==4.28.0
-mmengine
-accelerate

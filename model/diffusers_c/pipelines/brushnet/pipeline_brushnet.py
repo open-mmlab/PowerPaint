@@ -1,5 +1,5 @@
 import inspect
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import numpy as np
 import PIL.Image
@@ -68,10 +68,10 @@ EXAMPLE_DOC_STRING = """
         generator = torch.Generator("cuda").manual_seed(1234)
 
         image = pipe(
-            caption, 
-            init_image, 
-            mask_image, 
-            num_inference_steps=50, 
+            caption,
+            init_image,
+            mask_image,
+            num_inference_steps=50,
             generator=generator,
             paintingnet_conditioning_scale=1.0
         ).images[0]
@@ -1096,7 +1096,7 @@ class StableDiffusionBrushNetPipeline(
                 do_classifier_free_guidance=self.do_classifier_free_guidance,
                 guess_mode=guess_mode,
             )
-            original_mask=(original_mask.sum(1)[:,None,:,:] < 0).to(image.dtype)
+            original_mask = (original_mask.sum(1)[:, None, :, :] < 0).to(image.dtype)
             height, width = image.shape[-2:]
         else:
             assert False
@@ -1119,16 +1119,11 @@ class StableDiffusionBrushNetPipeline(
         )
 
         # 6.1 prepare condition latents
-        conditioning_latents=self.vae.encode(image).latent_dist.sample() * self.vae.config.scaling_factor
+        conditioning_latents = self.vae.encode(image).latent_dist.sample() * self.vae.config.scaling_factor
         mask = torch.nn.functional.interpolate(
-                    original_mask, 
-                    size=(
-                        conditioning_latents.shape[-2], 
-                        conditioning_latents.shape[-1]
-                    )
-                )
-        conditioning_latents = torch.concat([conditioning_latents,mask],1)
-
+            original_mask, size=(conditioning_latents.shape[-2], conditioning_latents.shape[-1])
+        )
+        conditioning_latents = torch.concat([conditioning_latents, mask], 1)
 
         # 6.5 Optionally get Guidance Scale Embedding
         timestep_cond = None

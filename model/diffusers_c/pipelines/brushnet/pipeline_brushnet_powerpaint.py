@@ -1,5 +1,5 @@
 import inspect
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import numpy as np
 import PIL.Image
@@ -68,10 +68,10 @@ EXAMPLE_DOC_STRING = """
         generator = torch.Generator("cuda").manual_seed(1234)
 
         image = pipe(
-            caption, 
-            init_image, 
-            mask_image, 
-            num_inference_steps=50, 
+            caption,
+            init_image,
+            mask_image,
+            num_inference_steps=50,
             generator=generator,
             paintingnet_conditioning_scale=1.0
         ).images[0]
@@ -296,7 +296,7 @@ class StableDiffusionBrushNetPowerPaintPipeline(
         """
         # set lora scale so that monkey patched LoRA
         # function of text encoder can correctly access it
-        print('1 ',prompt,negative_prompt)
+        print("1 ", prompt, negative_prompt)
         if lora_scale is not None and isinstance(self, LoraLoaderMixin):
             self._lora_scale = lora_scale
 
@@ -305,21 +305,21 @@ class StableDiffusionBrushNetPowerPaintPipeline(
                 adjust_lora_scale_text_encoder(self.text_encoder, lora_scale)
             else:
                 scale_lora_layers(self.text_encoder, lora_scale)
-        print('2 ',prompt,negative_prompt)
+        print("2 ", prompt, negative_prompt)
         if prompt is not None and isinstance(prompt, str):
             batch_size = 1
         elif prompt is not None and isinstance(prompt, list):
             batch_size = len(prompt)
         else:
             batch_size = prompt_embeds.shape[0]
-        print('3 ',prompt,negative_prompt)
+        print("3 ", prompt, negative_prompt)
         if prompt_embeds is None:
             # textual inversion: process multi-vector tokens if necessary
-            print('4 ',prompt,negative_prompt)
+            print("4 ", prompt, negative_prompt)
             if isinstance(self, TextualInversionLoaderMixin):
                 prompt = self.maybe_convert_prompt(prompt, self.tokenizer)
 
-            print('5 ',prompt,negative_prompt)
+            print("5 ", prompt, negative_prompt)
 
             text_inputs = self.tokenizer(
                 prompt,
@@ -864,8 +864,8 @@ class StableDiffusionBrushNetPowerPaintPipeline(
         clip_skip: Optional[int] = None,
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
-        con_prompt = None,
-        con_negprompt = None,
+        con_prompt=None,
+        con_negprompt=None,
         **kwargs,
     ):
         r"""
@@ -1081,7 +1081,6 @@ class StableDiffusionBrushNetPowerPaintPipeline(
             clip_skip=self.clip_skip,
         )
 
-
         # For classifier free guidance, we need to do two forward passes.
         # Here we concatenate the unconditional and text embeddings into a single batch
         # to avoid doing two forward passes
@@ -1122,7 +1121,7 @@ class StableDiffusionBrushNetPowerPaintPipeline(
                 do_classifier_free_guidance=self.do_classifier_free_guidance,
                 guess_mode=guess_mode,
             )
-            original_mask=(original_mask.sum(1)[:,None,:,:] < 0).to(image.dtype)
+            original_mask = (original_mask.sum(1)[:, None, :, :] < 0).to(image.dtype)
             height, width = image.shape[-2:]
         else:
             assert False
@@ -1148,24 +1147,19 @@ class StableDiffusionBrushNetPowerPaintPipeline(
         from torchvision import transforms
         # mask_i = transforms.ToPILImage()(image[0:1,:,:,:].squeeze(0))
         # mask_i.save('_mask.png')
-                
+
         print(image)
-        mask_i = transforms.ToPILImage()(image[0:1,:,:,:].squeeze(0)/2+0.5)
-        mask_i.save(str(timesteps[0])  +'_CC.png')
-        conditioning_latents=self.vae.encode(image).latent_dist.sample() * self.vae.config.scaling_factor
+        mask_i = transforms.ToPILImage()(image[0:1, :, :, :].squeeze(0) / 2 + 0.5)
+        mask_i.save(str(timesteps[0]) + "_CC.png")
+        conditioning_latents = self.vae.encode(image).latent_dist.sample() * self.vae.config.scaling_factor
         mask = torch.nn.functional.interpolate(
-                    original_mask, 
-                    size=(
-                        conditioning_latents.shape[-2], 
-                        conditioning_latents.shape[-1]
-                    )
-                )
-        conditioning_latents = torch.concat([conditioning_latents,mask],1)
+            original_mask, size=(conditioning_latents.shape[-2], conditioning_latents.shape[-1])
+        )
+        conditioning_latents = torch.concat([conditioning_latents, mask], 1)
         # image = self.vae.decode(conditioning_latents[:1,:4,:,:] / self.vae.config.scaling_factor, return_dict=False, generator=generator)[0]
         # from torchvision import transforms
         # mask_i = transforms.ToPILImage()(image[0:1,:,:,:].squeeze(0)/2+0.5)
         # mask_i.save(str(timesteps[0])  +'_C.png')
-
 
         # 6.5 Optionally get Guidance Scale Embedding
         timestep_cond = None

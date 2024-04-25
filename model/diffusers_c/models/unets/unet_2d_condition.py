@@ -1199,7 +1199,11 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin,
         # maintain backward compatibility for legacy usage, where
         #       T2I-Adapter and ControlNet both use down_block_additional_residuals arg
         #       but can only use one or the other
-        is_brushnet = down_block_add_samples is not None and mid_block_add_sample is not None and up_block_add_samples is not None
+        is_brushnet = (
+            down_block_add_samples is not None
+            and mid_block_add_sample is not None
+            and up_block_add_samples is not None
+        )
         if not is_adapter and mid_block_additional_residual is None and down_block_additional_residuals is not None:
             deprecate(
                 "T2I should not use down_block_additional_residuals",
@@ -1224,9 +1228,11 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin,
                 if is_adapter and len(down_intrablock_additional_residuals) > 0:
                     additional_residuals["additional_residuals"] = down_intrablock_additional_residuals.pop(0)
 
-                if is_brushnet and len(down_block_add_samples)>0:
-                    additional_residuals["down_block_add_samples"] = [down_block_add_samples.pop(0) 
-                                                        for _ in range(len(downsample_block.resnets)+(downsample_block.downsamplers !=None))]
+                if is_brushnet and len(down_block_add_samples) > 0:
+                    additional_residuals["down_block_add_samples"] = [
+                        down_block_add_samples.pop(0)
+                        for _ in range(len(downsample_block.resnets) + (downsample_block.downsamplers != None))
+                    ]
 
                 sample, res_samples = downsample_block(
                     hidden_states=sample,
@@ -1239,11 +1245,15 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin,
                 )
             else:
                 additional_residuals = {}
-                if is_brushnet and len(down_block_add_samples)>0:
-                    additional_residuals["down_block_add_samples"] = [down_block_add_samples.pop(0) 
-                                                        for _ in range(len(downsample_block.resnets)+(downsample_block.downsamplers !=None))]
+                if is_brushnet and len(down_block_add_samples) > 0:
+                    additional_residuals["down_block_add_samples"] = [
+                        down_block_add_samples.pop(0)
+                        for _ in range(len(downsample_block.resnets) + (downsample_block.downsamplers != None))
+                    ]
 
-                sample, res_samples = downsample_block(hidden_states=sample, temb=emb, scale=lora_scale, **additional_residuals)
+                sample, res_samples = downsample_block(
+                    hidden_states=sample, temb=emb, scale=lora_scale, **additional_residuals
+                )
                 if is_adapter and len(down_intrablock_additional_residuals) > 0:
                     sample += down_intrablock_additional_residuals.pop(0)
 
@@ -1302,10 +1312,12 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin,
 
             if hasattr(upsample_block, "has_cross_attention") and upsample_block.has_cross_attention:
                 additional_residuals = {}
-                if is_brushnet and len(up_block_add_samples)>0:
-                    additional_residuals["up_block_add_samples"] = [up_block_add_samples.pop(0) 
-                                                        for _ in range(len(upsample_block.resnets)+(upsample_block.upsamplers !=None))]
-                
+                if is_brushnet and len(up_block_add_samples) > 0:
+                    additional_residuals["up_block_add_samples"] = [
+                        up_block_add_samples.pop(0)
+                        for _ in range(len(upsample_block.resnets) + (upsample_block.upsamplers != None))
+                    ]
+
                 sample = upsample_block(
                     hidden_states=sample,
                     temb=emb,
@@ -1319,10 +1331,12 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin,
                 )
             else:
                 additional_residuals = {}
-                if is_brushnet and len(up_block_add_samples)>0:
-                    additional_residuals["up_block_add_samples"] = [up_block_add_samples.pop(0) 
-                                                        for _ in range(len(upsample_block.resnets)+(upsample_block.upsamplers !=None))]
-                
+                if is_brushnet and len(up_block_add_samples) > 0:
+                    additional_residuals["up_block_add_samples"] = [
+                        up_block_add_samples.pop(0)
+                        for _ in range(len(upsample_block.resnets) + (upsample_block.upsamplers != None))
+                    ]
+
                 sample = upsample_block(
                     hidden_states=sample,
                     temb=emb,
