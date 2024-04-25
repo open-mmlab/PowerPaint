@@ -6,7 +6,7 @@ output
 .venv/
 mlruns/
 data/
-
+PowerPaint_v2/
 *.pth
 *.pt
 *.pkl
