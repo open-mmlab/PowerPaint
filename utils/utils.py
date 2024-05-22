@@ -6,7 +6,8 @@ from typing import Any, List, Optional, Union
 
 import torch
 import torch.nn as nn
-from mmagic.utils import try_import
+import transformers
+# from mmagic.utils import try_import
 from mmengine import print_log
 
 
@@ -37,7 +38,7 @@ class TokenizerWrapper:
         *args,
         **kwargs,
     ):
-        transformers = try_import("transformers")
+        # transformers = try_import("transformers")
         module_cls = transformers.CLIPTokenizer
 
         assert not (from_pretrained and from_config), (
