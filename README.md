@@ -1,5 +1,6 @@
 # A Task is Worth One Word: Learning with Task Prompts for High-Quality Versatile Image Inpainting
 
+
 ### [Project Page](https://powerpaint.github.io/) | [Paper](https://arxiv.org/abs/2312.03594) | [Online Demo(OpenXlab)](https://openxlab.org.cn/apps/detail/rangoliu/PowerPaint#basic-information)
 
 This README provides a step-by-step guide to download the repository, set up the required virtual environment named "PowerPaint" using conda, and run PowerPaint with or without ControlNet.
@@ -8,11 +9,15 @@ This README provides a step-by-step guide to download the repository, set up the
 
 ## 🚀 News
 
+**May 22, 2024**:fire:
+
+- We open source the model weights for PowerPaint v2-1. [![HuggingFace Model](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Model-blue)](https://huggingface.co/JunhaoZhuang/PowerPaint-v2-1)
+
 **April 7, 2024**:fire:
 
 - We open source the model weights and code for PowerPaint v2. [![Open in OpenXLab](https://cdn-static.openxlab.org.cn/header/openxlab_models.svg)](https://openxlab.org.cn/models/detail/zhuangjunhao/PowerPaint_v2) [![HuggingFace Model](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Model-blue)](https://huggingface.co/JunhaoZhuang/PowerPaint_v2)
 
-**April 6, 2024**:fire:
+**April 6, 2024**:
 
 - We have retrained a new PowerPaint, taking inspiration from Brushnet. The [Online Demo](https://openxlab.org.cn/apps/detail/rangoliu/PowerPaint) has been updated accordingly. **We plan to release the model weights and code as open source in the next few days**.
 - Tips: We preserve the cross-attention layer that was deleted by BrushNet for the task prompts input.
