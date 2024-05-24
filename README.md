@@ -11,7 +11,7 @@ This README provides a step-by-step guide to download the repository, set up the
 
 **May 22, 2024**:fire:
 
-- We have open-sourced the model weights for PowerPaint v2-1, rectifying some existing issues that were present during the training process of version 2..[![HuggingFace Model](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Model-blue)](https://huggingface.co/JunhaoZhuang/PowerPaint-v2-1)
+- We have open-sourced the model weights for PowerPaint v2-1, rectifying some existing issues that were present during the training process of version 2. [![HuggingFace Model](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Model-blue)](https://huggingface.co/JunhaoZhuang/PowerPaint-v2-1)
 
 **April 7, 2024**:fire:
 
