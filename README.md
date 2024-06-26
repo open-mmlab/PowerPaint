@@ -1,11 +1,20 @@
-# A Task is Worth One Word: Learning with Task Prompts for High-Quality Versatile Image Inpainting
+# 🖌️ PowerPaint: A Versatile Image Inpainting Model
 
+[**A Task is Worth One Word: Learning with Task Prompts for High-Quality Versatile Image Inpainting**](https://arxiv.org/abs/2312.03594)
 
-### [Project Page](https://powerpaint.github.io/) | [Paper](https://arxiv.org/abs/2312.03594) | [Online Demo(OpenXlab)](https://openxlab.org.cn/apps/detail/rangoliu/PowerPaint#basic-information)
+[Junhao Zhuang](https://github.com/zhuang2002), [Yanhong Zeng](https://zengyh1900.github.io/), [Wenran Liu](https://github.com/liuwenran), [Chun Yuan†](https://www.sigs.tsinghua.edu.cn/yc2_en/main.htm), [Kai Chen†](https://chenkai.site/)
 
-This README provides a step-by-step guide to download the repository, set up the required virtual environment named "PowerPaint" using conda, and run PowerPaint with or without ControlNet.
+(†corresponding author)
 
-**Feel free to try it and give it a star!**:star:
+[![arXiv](https://img.shields.io/badge/arXiv-2312.03594-b31b1b.svg)](https://arxiv.org/abs/2312.03594)
+[![Project Page](https://img.shields.io/badge/PowerPaint-Website-green)](https://powerpaint.github.io/)
+[![Open in OpenXLab](https://cdn-static.openxlab.org.cn/app-center/openxlab_app.svg)](https://openxlab.org.cn/apps/detail/rangoliu/PowerPaint)
+[![HuggingFace Model](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Model-blue)](https://huggingface.co/JunhaoZhuang/PowerPaint-v1)
+
+**Your star means a lot for us to develop this project!** :star:
+
+PowerPaint is a high-quality versatile image inpainting model that supports text-guided object inpainting, object removal, shape-guided object insertion, and outpainting at the same time. We achieve this by learning with tailored task prompts for different inpainting tasks.
+
 
 ## 🚀 News
 
@@ -36,52 +45,125 @@ This README provides a step-by-step guide to download the repository, set up the
 *Enhanced PowerPaint Model*
 
 - We are delighted to announce the release of more stable model weights. These refined weights can now be accessed on [Hugging Face](https://huggingface.co/JunhaoZhuang/PowerPaint-v1/tree/main). The `gradio_PowerPaint.py` file and [Online Demo](https://openxlab.org.cn/apps/detail/rangoliu/PowerPaint) have also been updated as part of this release.
-
-
-
 ________________
 <img src='https://github.com/open-mmlab/mmagic/assets/12782558/acd01391-c73f-4997-aafd-0869aebcc915'/>
 
-## Getting Started
+## Get Started
 
 ```bash
 # Clone the Repository
-git clone https://github.com/zhuang2002/PowerPaint.git
-
-# Navigate to the Repository
-cd projects/powerpaint
+git clone git@github.com:open-mmlab/PowerPaint.git
 
 # Create Virtual Environment with Conda
-conda create --name PowerPaint python=3.9
-conda activate PowerPaint
+conda create --name ppt python=3.9
+conda activate ppt
 
 # Install Dependencies
-pip install -r requirements.txt
-```
-## PowerPaint v2
-
-```bash
-python gradio_PowerPaint_BrushNet.py
+pip install -r requirements/requirements.txt
 ```
 
-## PowerPaint v1
+Or you can construct a conda environment from scratch by running the following command:
 
 ```bash
-# Create Models Folder
-mkdir models
+conda env create -f requirements/ppt.yaml
+conda activate ppt
+```
 
+## Inference
+
+You can launch the Gradio interface for PowerPaint by running the following command:
+
+```bash
 # Set up Git LFS
+conda install git-lfs
 git lfs install
 
 # Clone PowerPaint Model
-git lfs clone https://huggingface.co/JunhaoZhuang/PowerPaint-v1/ ./models
+git lfs clone https://huggingface.co/JunhaoZhuang/PowerPaint-v1/ ./checkpoints/ppt-v1
 
-python gradio_PowerPaint.py
+python app.py --share
 ```
 
-This command will launch the Gradio interface for PowerPaint.
+For the BrushNet-based PowerPaint, you can run the following command:
+```bash
+# Clone PowerPaint Model
+git lfs clone https://huggingface.co/JunhaoZhuang/PowerPaint-v2-1/ ./checkpoints/ppt-v2-1
 
-Feel free to explore and edit images with PowerPaint!
+python app.py --share --version v2-1
+```
+
+### Text-Guided Object Inpainting
+
+After launching the Gradio interface, you can insert objects into images by uploading your image, drawing the mask, selecting the tab of `Text-guided object inpainting` and inputting the text prompt. The model will then generate the output image.
+
+|Input|Output|
+|---------------|-----------------|
+| ![input](assets/gradio_text_objinpaint.jpg) | ![input](assets/gradio_text_objinpaint_result.jpg)
+
+
+
+
+### Object Removal
+
+For object removal, you need to select the tab of `Object removal inpainting` and you don't need to input any prompts. PowerPaint is able to fill in the masked region according to context background.
+
+We remain the text box for inputing prompt, allowing users to further suppress object generation by using negative prompts.
+Specifically, we recommend to use 10 or higher value for Guidance Scale. If undesired objects appear in the masked area, you can address this by specifically increasing the Guidance Scale.
+
+|Input|Output|
+|---------------|-----------------|
+| ![input](assets/gradio_objremoval.jpg) | ![input](assets/gradio_objremoval_result.jpg)
+
+
+
+### Image Outpainting
+
+For image outpainting, you don't need to input any text prompt. You can simply select the tab of `Image outpainting` and adjust the slider for `horizontal expansion ratio` and `vertical expansion ratio`, then PowerPaint will extend the image for you.
+
+|Input|Output|
+|---------------|-----------------|
+| ![input](assets/gradio_outpaint.jpg) | ![input](assets/gradio_outpaint_result.jpg)
+
+
+
+
+
+
+### Shape-Guided Object Inpainting
+
+PowerPaint also supports shape-guided object inpainting, which allows users to control the fitting degree of the generated objects to the shape of masks. You can select the tab of `Shape-guided object inpainting` and input the text prompt. Then, you can adjust the slider of `fitting degree` to control the shape of generated object.
+
+Taking the following cases as example, you can draw a square mask and use a high fitting degree, e.g., 0.95, to generate a bread to fit in the mask shape. For the same mask, you can also use a low fitting degree, e.g., 0.55, to generate a reasonable result for rabbit. However, if you use a high fitting degree for the 'square rabit', the result may look funny.
+
+Basically, we recommend to use 0.5-0.6 for fitting degree when you want to generate objects that are not constrained by the mask shape. If you want to generate objects that fit the mask shape, you can use 0.8-0.95 for fitting degree.
+
+
+|Prompt | Fitting Degree | Input| Output|
+|-------|--------|--------|---------|
+|a bread  | 0.95| ![input](assets/shapeguided_s1.jpg) | ![input](assets/shapeguided_s1_result.jpg)
+|a rabbit | 0.55| ![input](assets/shapeguided_s1_rabbit.jpg) | ![input](assets/shapeguided_s1_rabbit_result.jpg)
+|a rabbit | 0.95|![input](assets/shapeguided_s1_rabbit_high.jpg) | ![input](assets/shapeguided_s1_rabbit_high_result.jpg)
+|a rabbit | 0.95 | ![input](assets/accurate_rabbit.jpg) | ![input](assets/accurate_rabbit_result.jpg)
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Training
+
+Stay tuned!
+
+
+
+
 
 ## BibTeX
 
