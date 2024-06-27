@@ -409,10 +409,6 @@ class StableDiffusionInpaintPipeline(
             else:
                 attention_mask = None
 
-            # print("text_input_idsA: ",text_input_idsA)
-            # print("text_input_idsB: ",text_input_idsB)
-            # print('t: ',t)
-
             prompt_embedsA = self.text_encoder(
                 text_input_idsA.to(device),
                 attention_mask=attention_mask,
@@ -729,7 +725,7 @@ class StableDiffusionInpaintPipeline(
         promptA: Union[str, List[str]] = None,
         promptB: Union[str, List[str]] = None,
         image: Union[torch.FloatTensor, PIL.Image.Image] = None,
-        mask_image: Union[torch.FloatTensor, PIL.Image.Image] = None,
+        mask: Union[torch.FloatTensor, PIL.Image.Image] = None,
         height: Optional[int] = None,
         width: Optional[int] = None,
         strength: float = 1.0,
@@ -923,9 +919,7 @@ class StableDiffusionInpaintPipeline(
         is_strength_max = strength == 1.0
 
         # 5. Preprocess mask and image
-        mask, masked_image, init_image = prepare_mask_and_masked_image(
-            image, mask_image, height, width, return_image=True
-        )
+        mask, masked_image, init_image = prepare_mask_and_masked_image(image, mask, height, width, return_image=True)
         mask_condition = mask.clone()
 
         # 6. Prepare latent variables

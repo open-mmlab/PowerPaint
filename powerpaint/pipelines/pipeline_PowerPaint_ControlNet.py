@@ -999,7 +999,7 @@ class StableDiffusionControlNetInpaintPipeline(
         promptA: Union[str, List[str]] = None,
         promptB: Union[str, List[str]] = None,
         image: Union[torch.FloatTensor, PIL.Image.Image] = None,
-        mask_image: Union[torch.FloatTensor, PIL.Image.Image] = None,
+        mask: Union[torch.FloatTensor, PIL.Image.Image] = None,
         height: Optional[int] = None,
         width: Optional[int] = None,
         strength: float = 1.0,
@@ -1193,9 +1193,7 @@ class StableDiffusionControlNetInpaintPipeline(
         is_strength_max = strength == 1.0
 
         # 5. Preprocess mask and image
-        mask, masked_image, init_image = prepare_mask_and_masked_image(
-            image, mask_image, height, width, return_image=True
-        )
+        mask, masked_image, init_image = prepare_mask_and_masked_image(image, mask, height, width, return_image=True)
         mask_condition = mask.clone()
 
         # 6. Prepare latent variables
@@ -1353,7 +1351,7 @@ class StableDiffusionControlNetInpaintPipeline(
         promptA: Union[str, List[str]] = None,
         promptB: Union[str, List[str]] = None,
         image: Union[torch.Tensor, PIL.Image.Image] = None,
-        mask_image: Union[torch.Tensor, PIL.Image.Image] = None,
+        mask: Union[torch.Tensor, PIL.Image.Image] = None,
         control_image: Union[
             torch.FloatTensor,
             PIL.Image.Image,
@@ -1597,9 +1595,7 @@ class StableDiffusionControlNetInpaintPipeline(
             assert False
 
         # 4. Preprocess mask and image - resizes image and mask w.r.t height and width
-        mask, masked_image, init_image = prepare_mask_and_masked_image(
-            image, mask_image, height, width, return_image=True
-        )
+        mask, masked_image, init_image = prepare_mask_and_masked_image(image, mask, height, width, return_image=True)
 
         # 5. Prepare timesteps
         self.scheduler.set_timesteps(num_inference_steps, device=device)

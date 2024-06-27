@@ -24,9 +24,8 @@ from diffusers.utils import (
     unscale_lora_layers,
 )
 from diffusers.utils.torch_utils import is_compiled_module, is_torch_version, randn_tensor
-from powerpaint.models.BrushNet_CA import BrushNetModel
 
-from ..models import UNet2DConditionModel
+from ..models import BrushNetModel, UNet2DConditionModel
 from ..utils import ImageProjection
 
 

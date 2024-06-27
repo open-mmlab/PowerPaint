@@ -87,9 +87,9 @@ python app.py --share
 For the BrushNet-based PowerPaint, you can run the following command:
 ```bash
 # Clone PowerPaint Model
-git lfs clone https://huggingface.co/JunhaoZhuang/PowerPaint-v2-1/ ./checkpoints/ppt-v2-1
+git lfs clone https://huggingface.co/JunhaoZhuang/PowerPaint_v2/ ./checkpoints/ppt-v2
 
-python app.py --share --version v2-1
+python app.py --share --version ppt-v2 --checkpoint_dir checkpoints/ppt-v2
 ```
 
 ### Text-Guided Object Inpainting
@@ -99,6 +99,21 @@ After launching the Gradio interface, you can insert objects into images by uplo
 |Input|Output|
 |---------------|-----------------|
 | ![input](assets/gradio_text_objinpaint.jpg) | ![input](assets/gradio_text_objinpaint_result.jpg)
+
+
+
+### Text-Guided Object Inpainting with ControlNet
+
+Fortunately, PowerPaint is compatible with ControlNet. Therefore, users can generate object with a control image.
+
+|Input| Condition | Control Image |Output|
+|-------|--------|-------|----------|
+|![input](assets/control_input.jpg) | Canny| ![input](assets/canny.jpg) | ![input](assets/canny_result.jpg)
+|![input](assets/control_input.jpg) | Depth| ![input](assets/depth.jpg) | ![input](assets/depth_result.jpg)
+|![input](assets/control_input.jpg) | HED| ![input](assets/hed.jpg) | ![input](assets/hed_result.jpg)
+|![input](assets/pose_input.jpg) | Pose| ![input](assets/pose_control.jpg) | ![input](assets/pose_result.jpg)
+
+
 
 
 
@@ -123,9 +138,6 @@ For image outpainting, you don't need to input any text prompt. You can simply s
 |Input|Output|
 |---------------|-----------------|
 | ![input](assets/gradio_outpaint.jpg) | ![input](assets/gradio_outpaint_result.jpg)
-
-
-
 
 
 

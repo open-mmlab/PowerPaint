@@ -34,7 +34,7 @@ def set_seed(seed):
     random.seed(seed)
 
 
-def add_task_v1(prompt, negative_prompt, control_type):
+def add_task(prompt, negative_prompt, control_type):
     if control_type == "object-removal":
         promptA = "empty scene blur " + prompt + " P_ctxt"
         promptB = "empty scene blur " + prompt + " P_ctxt"
@@ -57,36 +57,6 @@ def add_task_v1(prompt, negative_prompt, control_type):
         promptB = prompt + " P_obj"
         negative_promptA = negative_prompt + ", worst quality, low quality, normal quality, bad quality, blurry, P_obj"
         negative_promptB = negative_prompt + ", worst quality, low quality, normal quality, bad quality, blurry, P_obj"
-
-    return promptA, promptB, negative_promptA, negative_promptB
-
-
-def add_task_brushnet(control_type):
-    if control_type == "object-removal":
-        promptA = "P_ctxt"
-        promptB = "P_ctxt"
-        negative_promptA = "P_obj"
-        negative_promptB = "P_obj"
-    elif control_type == "context-aware":
-        promptA = "P_ctxt"
-        promptB = "P_ctxt"
-        negative_promptA = ""
-        negative_promptB = ""
-    elif control_type == "shape-guided":
-        promptA = "P_shape"
-        promptB = "P_ctxt"
-        negative_promptA = "P_shape"
-        negative_promptB = "P_ctxt"
-    elif control_type == "image-outpainting":
-        promptA = "P_ctxt"
-        promptB = "P_ctxt"
-        negative_promptA = "P_obj"
-        negative_promptB = "P_obj"
-    else:
-        promptA = "P_obj"
-        promptB = "P_obj"
-        negative_promptA = "P_obj"
-        negative_promptB = "P_obj"
 
     return promptA, promptB, negative_promptA, negative_promptB
 
@@ -182,20 +152,24 @@ class PowerPaintController:
             # add learned task tokens into the tokenizer
             add_tokens(
                 tokenizer=self.pipe.tokenizer,
-                text_encoder=self.pipe.text_encoder,
+                text_encoder=self.pipe.text_encoder_brushnet,
                 placeholder_tokens=["P_ctxt", "P_shape", "P_obj"],
                 initialize_tokens=["a", "a", "a"],
                 num_vectors_per_token=10,
             )
-            load_model(self.pipe.brushnet, os.path.join(checkpoint_dir, "diffusion_pytorch_model.safetensors"))
+            load_model(
+                self.pipe.brushnet,
+                os.path.join(checkpoint_dir, "PowerPaint_Brushnet/diffusion_pytorch_model.safetensors"),
+            )
 
             self.pipe.text_encoder_brushnet.load_state_dict(
-                torch.load(os.path.join(checkpoint_dir, "pytorch_model.bin")), strict=False
+                torch.load(os.path.join(checkpoint_dir, "PowerPaint_Brushnet/pytorch_model.bin")), strict=False
             )
 
             self.pipe.scheduler = UniPCMultistepScheduler.from_config(self.pipe.scheduler.config)
 
             self.pipe.enable_model_cpu_offload()
+            self.pipe = self.pipe.to("cuda")
 
         # initialize controlnet-related models
         self.depth_estimator = DPTForDepthEstimation.from_pretrained("Intel/dpt-hybrid-midas").to("cuda")
@@ -329,10 +303,7 @@ class PowerPaintController:
             input_image["image"] = Image.fromarray(expand_img)
             input_image["mask"] = Image.fromarray(expand_mask)
 
-        if self.version == "ppt-v1":
-            promptA, promptB, negative_promptA, negative_promptB = add_task_v1(prompt, negative_prompt, task)
-        else:
-            promptA, promptB, negative_promptA, negative_promptB = add_task_brushnet(task)
+        promptA, promptB, negative_promptA, negative_promptB = add_task(prompt, negative_prompt, task)
         print(promptA, promptB, negative_promptA, negative_promptB)
 
         img = np.array(input_image["image"].convert("RGB"))
@@ -341,20 +312,44 @@ class PowerPaintController:
         input_image["image"] = input_image["image"].resize((H, W))
         input_image["mask"] = input_image["mask"].resize((H, W))
         set_seed(seed)
-        result = self.pipe(
-            promptA=promptA,
-            promptB=promptB,
-            tradoff=fitting_degree,
-            tradoff_nag=fitting_degree,
-            negative_promptA=negative_promptA,
-            negative_promptB=negative_promptB,
-            image=input_image["image"].convert("RGB"),
-            mask_image=input_image["mask"].convert("RGB"),
-            width=H,
-            height=W,
-            guidance_scale=scale,
-            num_inference_steps=ddim_steps,
-        ).images[0]
+
+        if self.version == "ppt-v1":
+            # for sd-inpainting based method
+            result = self.pipe(
+                promptA=promptA,
+                promptB=promptB,
+                tradoff=fitting_degree,
+                tradoff_nag=fitting_degree,
+                negative_promptA=negative_promptA,
+                negative_promptB=negative_promptB,
+                image=input_image["image"].convert("RGB"),
+                mask=input_image["mask"].convert("RGB"),
+                width=H,
+                height=W,
+                guidance_scale=scale,
+                num_inference_steps=ddim_steps,
+            ).images[0]
+        else:
+            # for brushnet-based method
+            result = self.pipe(
+                promptA=promptA,
+                promptB=promptB,
+                promptU=prompt,
+                tradoff=fitting_degree,
+                tradoff_nag=fitting_degree,
+                image=input_image["image"].convert("RGB"),
+                mask=input_image["mask"].convert("RGB"),
+                num_inference_steps=ddim_steps,
+                generator=torch.Generator("cuda").manual_seed(seed),
+                brushnet_conditioning_scale=1.0,
+                negative_promptA=negative_promptA,
+                negative_promptB=negative_promptB,
+                negative_promptU=negative_prompt,
+                guidance_scale=scale,
+                width=H,
+                height=W,
+            ).images[0]
+
         mask_np = np.array(input_image["mask"].convert("RGB"))
         red = np.array(result).astype("float") * 1
         red[:, :, 0] = 180.0
@@ -437,7 +432,7 @@ class PowerPaintController:
             negative_promptA=negative_promptA,
             negative_promptB=negative_promptB,
             image=input_image["image"].convert("RGB"),
-            mask_image=input_image["mask"].convert("RGB"),
+            mask=input_image["mask"].convert("RGB"),
             control_image=controlnet_image,
             width=H,
             height=W,
@@ -478,16 +473,16 @@ class PowerPaintController:
         scale,
         seed,
         task,
-        enable_control,
-        input_control_image,
-        control_type,
         vertical_expansion_ratio,
         horizontal_expansion_ratio,
         outpaint_prompt,
         outpaint_negative_prompt,
-        controlnet_conditioning_scale,
         removal_prompt,
         removal_negative_prompt,
+        enable_control,
+        input_control_image,
+        control_type,
+        controlnet_conditioning_scale,
     ):
         if task == "text-guided":
             prompt = text_guided_prompt
@@ -697,16 +692,16 @@ if __name__ == "__main__":
                 scale,
                 seed,
                 task,
-                enable_control,
-                input_control_image,
-                control_type,
-                controlnet_conditioning_scale,
                 vertical_expansion_ratio,
                 horizontal_expansion_ratio,
                 outpaint_prompt,
                 outpaint_negative_prompt,
                 removal_prompt,
                 removal_negative_prompt,
+                enable_control,
+                input_control_image,
+                control_type,
+                controlnet_conditioning_scale,
             ],
             outputs=[inpaint_result, gallery],
         )
