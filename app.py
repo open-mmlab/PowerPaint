@@ -34,29 +34,32 @@ def set_seed(seed):
     random.seed(seed)
 
 
-def add_task(prompt, negative_prompt, control_type):
-    if control_type == "object-removal":
-        promptA = "empty scene blur " + prompt + " P_ctxt"
-        promptB = "empty scene blur " + prompt + " P_ctxt"
-        negative_promptA = negative_prompt + " P_obj"
-        negative_promptB = negative_prompt + " P_obj"
+def add_task(prompt, negative_prompt, control_type, version):
+    pos_prefix = neg_prefix = ""
+    if control_type == "object-removal" or control_type == "image-outpainting":
+        if version == "ppt-v1":
+            pos_prefix = "empty scene blur " + prompt
+            neg_prefix = negative_prompt
+        promptA = pos_prefix + " P_ctxt"
+        promptB = pos_prefix + " P_ctxt"
+        negative_promptA = neg_prefix + " P_obj"
+        negative_promptB = neg_prefix + " P_obj"
     elif control_type == "shape-guided":
-        promptA = prompt + " P_shape"
-        promptB = prompt + " P_ctxt"
-        negative_promptA = (
-            negative_prompt + ", worst quality, low quality, normal quality, bad quality, blurry P_shape"
-        )
-        negative_promptB = negative_prompt + ", worst quality, low quality, normal quality, bad quality, blurry P_ctxt"
-    elif control_type == "image-outpainting":
-        promptA = "empty scene " + prompt + " P_ctxt"
-        promptB = "empty scene " + prompt + " P_ctxt"
-        negative_promptA = negative_prompt + " P_obj"
-        negative_promptB = negative_prompt + " P_obj"
+        if version == "ppt-v1":
+            pos_prefix = prompt
+            neg_prefix = negative_prompt + ", worst quality, low quality, normal quality, bad quality, blurry "
+        promptA = pos_prefix + " P_shape"
+        promptB = pos_prefix + " P_ctxt"
+        negative_promptA = neg_prefix + "P_shape"
+        negative_promptB = neg_prefix + "P_ctxt"
     else:
-        promptA = prompt + " P_obj"
-        promptB = prompt + " P_obj"
-        negative_promptA = negative_prompt + ", worst quality, low quality, normal quality, bad quality, blurry, P_obj"
-        negative_promptB = negative_prompt + ", worst quality, low quality, normal quality, bad quality, blurry, P_obj"
+        if version == "ppt-v1":
+            pos_prefix = prompt
+            neg_prefix = negative_prompt + ", worst quality, low quality, normal quality, bad quality, blurry "
+        promptA = pos_prefix + " P_obj"
+        promptB = pos_prefix + " P_obj"
+        negative_promptA = neg_prefix + "P_obj"
+        negative_promptB = neg_prefix + "P_obj"
 
     return promptA, promptB, negative_promptA, negative_promptB
 
@@ -108,6 +111,31 @@ class PowerPaintController:
             load_model(self.pipe.unet, os.path.join(checkpoint_dir, "unet/unet.safetensors"))
             load_model(self.pipe.text_encoder, os.path.join(checkpoint_dir, "text_encoder/text_encoder.safetensors"))
             self.pipe = self.pipe.to("cuda")
+
+            # initialize controlnet-related models
+            self.depth_estimator = DPTForDepthEstimation.from_pretrained("Intel/dpt-hybrid-midas").to("cuda")
+            self.feature_extractor = DPTFeatureExtractor.from_pretrained("Intel/dpt-hybrid-midas")
+            self.openpose = OpenposeDetector.from_pretrained("lllyasviel/ControlNet")
+            self.hed = HEDdetector.from_pretrained("lllyasviel/ControlNet")
+
+            base_control = ControlNetModel.from_pretrained(
+                "lllyasviel/sd-controlnet-canny", torch_dtype=weight_dtype, local_files_only=local_files_only
+            )
+            self.control_pipe = controlnetPipeline(
+                self.pipe.vae,
+                self.pipe.text_encoder,
+                self.pipe.tokenizer,
+                self.pipe.unet,
+                base_control,
+                self.pipe.scheduler,
+                None,
+                None,
+                False,
+            )
+            self.control_pipe = self.control_pipe.to("cuda")
+
+            self.current_control = "canny"
+            # controlnet_conditioning_scale = 0.8
         else:
             # brushnet-based version
             unet = UNet2DConditionModel.from_pretrained(
@@ -170,31 +198,6 @@ class PowerPaintController:
 
             self.pipe.enable_model_cpu_offload()
             self.pipe = self.pipe.to("cuda")
-
-        # initialize controlnet-related models
-        self.depth_estimator = DPTForDepthEstimation.from_pretrained("Intel/dpt-hybrid-midas").to("cuda")
-        self.feature_extractor = DPTFeatureExtractor.from_pretrained("Intel/dpt-hybrid-midas")
-        self.openpose = OpenposeDetector.from_pretrained("lllyasviel/ControlNet")
-        self.hed = HEDdetector.from_pretrained("lllyasviel/ControlNet")
-
-        base_control = ControlNetModel.from_pretrained(
-            "lllyasviel/sd-controlnet-canny", torch_dtype=weight_dtype, local_files_only=local_files_only
-        )
-        self.control_pipe = controlnetPipeline(
-            self.pipe.vae,
-            self.pipe.text_encoder,
-            self.pipe.tokenizer,
-            self.pipe.unet,
-            base_control,
-            self.pipe.scheduler,
-            None,
-            None,
-            False,
-        )
-        self.control_pipe = self.control_pipe.to("cuda")
-
-        self.current_control = "canny"
-        # controlnet_conditioning_scale = 0.8
 
     def get_depth_map(self, image):
         image = self.feature_extractor(images=image, return_tensors="pt").pixel_values.to("cuda")
@@ -303,7 +306,12 @@ class PowerPaintController:
             input_image["image"] = Image.fromarray(expand_img)
             input_image["mask"] = Image.fromarray(expand_mask)
 
-        promptA, promptB, negative_promptA, negative_promptB = add_task(prompt, negative_prompt, task)
+        if self.version != "ppt-v1":
+            if task == "image-outpainting":
+                prompt = prompt + " empty scene"
+            if task == "object-removal":
+                prompt = prompt + " empty scene blur"
+        promptA, promptB, negative_promptA, negative_promptB = add_task(prompt, negative_prompt, task, self.version)
         print(promptA, promptB, negative_promptA, negative_promptB)
 
         img = np.array(input_image["image"].convert("RGB"))
@@ -331,6 +339,10 @@ class PowerPaintController:
             ).images[0]
         else:
             # for brushnet-based method
+            np_inpimg = np.array(input_image["image"])
+            np_inmask = np.array(input_image["mask"]) / 255.0
+            np_inpimg = np_inpimg * (1 - np_inmask)
+            input_image["image"] = Image.fromarray(np_inpimg.astype(np.uint8)).convert("RGB")
             result = self.pipe(
                 promptA=promptA,
                 promptB=promptB,
@@ -367,12 +379,11 @@ class PowerPaintController:
         img_np = np.asarray(input_image["image"].convert("RGB")) / 255.0
         ours_np = np.asarray(result) / 255.0
         ours_np = ours_np * m_img + (1 - m_img) * img_np
-        result_paste = Image.fromarray(np.uint8(ours_np * 255))
-
         dict_res = [input_image["mask"].convert("RGB"), result_m]
 
-        dict_out = [input_image["image"].convert("RGB"), result_paste]
-
+        # result_paste = Image.fromarray(np.uint8(ours_np * 255))
+        # dict_out = [input_image["image"].convert("RGB"), result_paste]
+        dict_out = [result]
         return dict_out, dict_res
 
     def predict_controlnet(
@@ -479,10 +490,10 @@ class PowerPaintController:
         outpaint_negative_prompt,
         removal_prompt,
         removal_negative_prompt,
-        enable_control,
-        input_control_image,
-        control_type,
-        controlnet_conditioning_scale,
+        enable_control=False,
+        input_control_image=None,
+        control_type="canny",
+        controlnet_conditioning_scale=None,
     ):
         if task == "text-guided":
             prompt = text_guided_prompt
@@ -513,7 +524,8 @@ class PowerPaintController:
             prompt = text_guided_prompt
             negative_prompt = text_guided_negative_prompt
 
-        if enable_control and task == "text-guided":
+        # currently, we only support controlnet in PowerPaint-v1
+        if self.version == "ppt-v1" and enable_control and task == "text-guided":
             return self.predict_controlnet(
                 input_image,
                 input_control_image,
@@ -582,20 +594,23 @@ if __name__ == "__main__":
                     )
                     text_guided_prompt = gr.Textbox(label="Prompt")
                     text_guided_negative_prompt = gr.Textbox(label="negative_prompt")
-                    gr.Markdown("### Controlnet setting")
-                    enable_control = gr.Checkbox(
-                        label="Enable controlnet", info="Enable this if you want to use controlnet"
-                    )
-                    controlnet_conditioning_scale = gr.Slider(
-                        label="controlnet conditioning scale",
-                        minimum=0,
-                        maximum=1,
-                        step=0.05,
-                        value=0.5,
-                    )
-                    control_type = gr.Radio(["canny", "pose", "depth", "hed"], label="Control type")
-                    input_control_image = gr.Image(source="upload", type="pil")
-                tab_text_guided.select(fn=select_tab_text_guided, inputs=None, outputs=task)
+                    tab_text_guided.select(fn=select_tab_text_guided, inputs=None, outputs=task)
+
+                    # currently, we only support controlnet in PowerPaint-v1
+                    if args.version == "ppt-v1":
+                        gr.Markdown("### Controlnet setting")
+                        enable_control = gr.Checkbox(
+                            label="Enable controlnet", info="Enable this if you want to use controlnet"
+                        )
+                        controlnet_conditioning_scale = gr.Slider(
+                            label="controlnet conditioning scale",
+                            minimum=0,
+                            maximum=1,
+                            step=0.05,
+                            value=0.5,
+                        )
+                        control_type = gr.Radio(["canny", "pose", "depth", "hed"], label="Control type")
+                        input_control_image = gr.Image(source="upload", type="pil")
 
                 # Object removal inpainting
                 with gr.Tab("Object removal inpainting") as tab_object_removal:
@@ -679,32 +694,56 @@ if __name__ == "__main__":
                 gr.Markdown("### Mask")
                 gallery = gr.Gallery(label="Generated masks", show_label=False, columns=2)
 
-        run_button.click(
-            fn=controller.infer,
-            inputs=[
-                input_image,
-                text_guided_prompt,
-                text_guided_negative_prompt,
-                shape_guided_prompt,
-                shape_guided_negative_prompt,
-                fitting_degree,
-                ddim_steps,
-                scale,
-                seed,
-                task,
-                vertical_expansion_ratio,
-                horizontal_expansion_ratio,
-                outpaint_prompt,
-                outpaint_negative_prompt,
-                removal_prompt,
-                removal_negative_prompt,
-                enable_control,
-                input_control_image,
-                control_type,
-                controlnet_conditioning_scale,
-            ],
-            outputs=[inpaint_result, gallery],
-        )
+        if args.version == "ppt-v1":
+            run_button.click(
+                fn=controller.infer,
+                inputs=[
+                    input_image,
+                    text_guided_prompt,
+                    text_guided_negative_prompt,
+                    shape_guided_prompt,
+                    shape_guided_negative_prompt,
+                    fitting_degree,
+                    ddim_steps,
+                    scale,
+                    seed,
+                    task,
+                    vertical_expansion_ratio,
+                    horizontal_expansion_ratio,
+                    outpaint_prompt,
+                    outpaint_negative_prompt,
+                    removal_prompt,
+                    removal_negative_prompt,
+                    enable_control,
+                    input_control_image,
+                    control_type,
+                    controlnet_conditioning_scale,
+                ],
+                outputs=[inpaint_result, gallery],
+            )
+        else:
+            run_button.click(
+                fn=controller.infer,
+                inputs=[
+                    input_image,
+                    text_guided_prompt,
+                    text_guided_negative_prompt,
+                    shape_guided_prompt,
+                    shape_guided_negative_prompt,
+                    fitting_degree,
+                    ddim_steps,
+                    scale,
+                    seed,
+                    task,
+                    vertical_expansion_ratio,
+                    horizontal_expansion_ratio,
+                    outpaint_prompt,
+                    outpaint_negative_prompt,
+                    removal_prompt,
+                    removal_negative_prompt,
+                ],
+                outputs=[inpaint_result, gallery],
+            )
 
     demo.queue()
     demo.launch(share=args.share, server_name="0.0.0.0", server_port=args.port)

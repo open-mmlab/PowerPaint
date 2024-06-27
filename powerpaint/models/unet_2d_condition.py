@@ -42,12 +42,13 @@ from diffusers.models.embeddings import (
     Timesteps,
 )
 from diffusers.models.modeling_utils import ModelMixin
-from diffusers.models.unets.unet_2d_blocks import (
+from diffusers.utils import USE_PEFT_BACKEND, BaseOutput, deprecate, logging, scale_lora_layers, unscale_lora_layers
+
+from .unet_2d_blocks import (
     get_down_block,
     get_mid_block,
     get_up_block,
 )
-from diffusers.utils import USE_PEFT_BACKEND, BaseOutput, deprecate, logging, scale_lora_layers, unscale_lora_layers
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name

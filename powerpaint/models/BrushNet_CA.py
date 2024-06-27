@@ -20,15 +20,16 @@ from diffusers.models.embeddings import (
     Timesteps,
 )
 from diffusers.models.modeling_utils import ModelMixin
-from diffusers.models.unets.unet_2d_blocks import (
+from diffusers.utils import BaseOutput, logging
+
+from .unet_2d_blocks import (
     CrossAttnDownBlock2D,
     DownBlock2D,
     get_down_block,
     get_mid_block,
     get_up_block,
 )
-from diffusers.utils import BaseOutput, logging
-from powerpaint.models.unet_2d_condition import UNet2DConditionModel
+from .unet_2d_condition import UNet2DConditionModel
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
