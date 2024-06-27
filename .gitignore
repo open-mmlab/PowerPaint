@@ -1,4 +1,5 @@
-__pycache__/
+__pycache__
+checkpoints/
 .ruff_cache
 pretrained_weights/
 output/
@@ -15,4 +16,3 @@ data/
 *.jpg
 *.mp4
 *.gif
-

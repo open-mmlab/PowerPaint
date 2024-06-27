@@ -1,0 +1,9 @@
+accelerate
+controlnet-aux==0.0.3
+diffusers==0.27.0
+gradio==3.41.0
+mmengine
+opencv-python
+torch
+torchvision
+transformers==4.28.0
