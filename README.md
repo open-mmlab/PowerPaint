@@ -15,6 +15,8 @@
 
 PowerPaint is a high-quality versatile image inpainting model that supports text-guided object inpainting, object removal, shape-guided object insertion, and outpainting at the same time. We achieve this by learning with tailored task prompts for different inpainting tasks.
 
+<img src='https://github.com/open-mmlab/mmagic/assets/12782558/acd01391-c73f-4997-aafd-0869aebcc915'/>
+
 
 ## 🚀 News
 
@@ -45,8 +47,6 @@ PowerPaint is a high-quality versatile image inpainting model that supports text
 *Enhanced PowerPaint Model*
 
 - We are delighted to announce the release of more stable model weights. These refined weights can now be accessed on [Hugging Face](https://huggingface.co/JunhaoZhuang/PowerPaint-v1/tree/main). The `gradio_PowerPaint.py` file and [Online Demo](https://openxlab.org.cn/apps/detail/rangoliu/PowerPaint) have also been updated as part of this release.
-________________
-<img src='https://github.com/open-mmlab/mmagic/assets/12782558/acd01391-c73f-4997-aafd-0869aebcc915'/>
 
 ## Get Started
 
@@ -98,7 +98,7 @@ After launching the Gradio interface, you can insert objects into images by uplo
 
 |Input|Output|
 |---------------|-----------------|
-| ![input](assets/gradio_text_objinpaint.jpg) | ![input](assets/gradio_text_objinpaint_result.jpg)
+| <img src="assets/gradio_text_objinpaint.jpg"> | <img src="assets/gradio_text_objinpaint_result.jpg">
 
 
 
@@ -108,14 +108,10 @@ Fortunately, PowerPaint is compatible with ControlNet. Therefore, users can gene
 
 |Input| Condition | Control Image |Output|
 |-------|--------|-------|----------|
-|![input](assets/control_input.jpg) | Canny| ![input](assets/canny.jpg) | ![input](assets/canny_result.jpg)
-|![input](assets/control_input.jpg) | Depth| ![input](assets/depth.jpg) | ![input](assets/depth_result.jpg)
-|![input](assets/control_input.jpg) | HED| ![input](assets/hed.jpg) | ![input](assets/hed_result.jpg)
-|![input](assets/pose_input.jpg) | Pose| ![input](assets/pose_control.jpg) | ![input](assets/pose_result.jpg)
-
-
-
-
+|<img src="assets/control_input.jpg"> | Canny| <img src="assets/canny.jpg"> | <img src="assets/canny_result.jpg">
+|<img src="assets/control_input.jpg"> | Depth| <img src="assets/depth.jpg"> | <img src="assets/depth_result.jpg">
+|<img src="assets/control_input.jpg"> | HED| <img src="assets/hed.jpg"> | <img src="assets/hed_result.jpg">
+|<img src="assets/pose_input.jpg"> | Pose| <img src="assets/pose_control.jpg"> | <img src="assets/pose_result.jpg">
 
 
 ### Object Removal
@@ -127,7 +123,7 @@ Specifically, we recommend to use 10 or higher value for Guidance Scale. If unde
 
 |Input|Output|
 |---------------|-----------------|
-| ![input](assets/gradio_objremoval.jpg) | ![input](assets/gradio_objremoval_result.jpg)
+| <img src="assets/gradio_objremoval.jpg"> | <img src="assets/gradio_objremoval_result.jpg">
 
 
 
@@ -137,7 +133,7 @@ For image outpainting, you don't need to input any text prompt. You can simply s
 
 |Input|Output|
 |---------------|-----------------|
-| ![input](assets/gradio_outpaint.jpg) | ![input](assets/gradio_outpaint_result.jpg)
+| <img src="assets/gradio_outpaint.jpg"> | <img src="assets/gradio_outpaint_result.jpg">
 
 
 
@@ -152,15 +148,10 @@ Basically, we recommend to use 0.5-0.6 for fitting degree when you want to gener
 
 |Prompt | Fitting Degree | Input| Output|
 |-------|--------|--------|---------|
-|a bread  | 0.95| ![input](assets/shapeguided_s1.jpg) | ![input](assets/shapeguided_s1_result.jpg)
-|a rabbit | 0.55| ![input](assets/shapeguided_s1_rabbit.jpg) | ![input](assets/shapeguided_s1_rabbit_result.jpg)
-|a rabbit | 0.95|![input](assets/shapeguided_s1_rabbit_high.jpg) | ![input](assets/shapeguided_s1_rabbit_high_result.jpg)
-|a rabbit | 0.95 | ![input](assets/accurate_rabbit.jpg) | ![input](assets/accurate_rabbit_result.jpg)
-
-
-
-
-
+|a bread  | 0.95| <img src="assets/shapeguided_s1.jpg"> | <img src="assets/shapeguided_s1_result.jpg">
+|a rabbit | 0.55| <img src="assets/shapeguided_s1_rabbit.jpg"> | <img src="assets/shapeguided_s1_rabbit_result.jpg">
+|a rabbit | 0.95|<img src="assets/shapeguided_s1_rabbit_high.jpg"> | <img src="assets/shapeguided_s1_rabbit_high_result.jpg">
+|a rabbit | 0.95 | <img src="assets/accurate_rabbit.jpg"> | <img src="assets/accurate_rabbit_result.jpg">
 
 
 
