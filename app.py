@@ -362,28 +362,33 @@ class PowerPaintController:
                 height=W,
             ).images[0]
 
+        # highlighted inpainting results
         mask_np = np.array(input_image["mask"].convert("RGB"))
+        result_m = np.array(result)
         red = np.array(result).astype("float") * 1
         red[:, :, 0] = 180.0
         red[:, :, 2] = 0
         red[:, :, 1] = 0
-        result_m = np.array(result)
         result_m = Image.fromarray(
             (
                 result_m.astype("float") * (1 - mask_np.astype("float") / 512.0)
                 + mask_np.astype("float") / 512.0 * red
             ).astype("uint8")
         )
-        m_img = input_image["mask"].convert("RGB").filter(ImageFilter.GaussianBlur(radius=3))
-        m_img = np.asarray(m_img) / 255.0
-        img_np = np.asarray(input_image["image"].convert("RGB")) / 255.0
-        ours_np = np.asarray(result) / 255.0
-        ours_np = ours_np * m_img + (1 - m_img) * img_np
-        dict_res = [input_image["mask"].convert("RGB"), result_m]
 
-        # result_paste = Image.fromarray(np.uint8(ours_np * 255))
-        # dict_out = [input_image["image"].convert("RGB"), result_paste]
-        dict_out = [result]
+        # paste the inpainting results into original images
+        m_img = 255 - np.array(input_image["mask"].convert("RGB"))
+        m_img = Image.fromarray(m_img).filter(ImageFilter.GaussianBlur(radius=3))
+        m_img = 1.0 - np.asarray(m_img) / 255.0
+        m_img = np.asarray(m_img > 0).astype("float")
+        original_np = np.asarray(input_image["image"].convert("RGB")) / 255.0
+        ours_np = np.asarray(result) / 255.0
+        result_paste = ours_np * m_img + (1.0 - m_img) * original_np
+        result_paste = Image.fromarray(np.uint8(result_paste * 255))
+
+        # final output
+        dict_out = [input_image["image"].convert("RGB"), result_paste]  # [result]
+        dict_res = [input_image["mask"].convert("RGB"), result_m]
         return dict_out, dict_res
 
     def predict_controlnet(

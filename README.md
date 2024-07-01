@@ -50,6 +50,8 @@ PowerPaint is a high-quality versatile image inpainting model that supports text
 
 ## Get Started
 
+**Recommend Environment:** `cuda 11.8` + `python 3.9`
+
 ```bash
 # Clone the Repository
 git clone git@github.com:open-mmlab/PowerPaint.git
@@ -84,13 +86,16 @@ git lfs clone https://huggingface.co/JunhaoZhuang/PowerPaint-v1/ ./checkpoints/p
 python app.py --share
 ```
 
-For the BrushNet-based PowerPaint, you can run the following command:
+We suggest you give a try to BrushNet-based PowerPaint built upon RealisticVision base model, which exhibits higher visual quality. You can run the following command:
 ```bash
 # Clone PowerPaint Model
 git lfs clone https://huggingface.co/JunhaoZhuang/PowerPaint_v2/ ./checkpoints/ppt-v2
 
 python app.py --share --version ppt-v2 --checkpoint_dir checkpoints/ppt-v2
 ```
+Specifically, if you have downloaded the weights and want to skip the step of cloning the model, you can skip that step by enabling `--local_files_only`.
+
+
 
 ### Text-Guided Object Inpainting
 
