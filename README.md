@@ -86,7 +86,7 @@ git lfs clone https://huggingface.co/JunhaoZhuang/PowerPaint-v1/ ./checkpoints/p
 python app.py --share
 ```
 
-We suggest you give a try to BrushNet-based PowerPaint built upon RealisticVision base model, which exhibits higher visual quality. You can run the following command:
+We suggest PowerPaint-V2 that is built upon BrushNet with RealisticVision as the base model, which exhibits higher visual quality. You can run the following command:
 ```bash
 # Clone PowerPaint Model
 git lfs clone https://huggingface.co/JunhaoZhuang/PowerPaint_v2/ ./checkpoints/ppt-v2
@@ -160,14 +160,47 @@ Basically, we recommend to use 0.5-0.6 for fitting degree when you want to gener
 
 
 
-
-
-
-
-
 ## Training
 
-Stay tuned!
+We suggest using PowerPaint-V2 version, which is built upon BrushNet and requires smaller batch size for training.
+You can train it with the following command,
+```shell
+accelerate launch train_ppt_brushnet.py \
+  --pretrained_model_name_or_path runwayml/stable-diffusion-inpainting \
+  --output_dir runs/logs/ppt_brushnet \
+  --train_data_dir data/ \
+  --resolution 512 \
+  --learning_rate 1e-5 \
+  --train_batch_size 6 \
+  --dataloader_num_workers 32 \
+  --gradient_accumulation_steps 10 \
+  --checkpointing_steps 2000 \
+  --tracker_project_name ppt_brushnet \
+  --report_to tensorboard \
+  --resume_from_checkpoint latest \
+  --validation_steps 1000
+```
+
+For PowerPaint-V1 version, you can train it with the following command,
+```shell
+accelerate launch train_ppt_sd15.py \
+  --pretrained_model_name_or_path runwayml/stable-diffusion-inpainting \
+  --use_ema \
+  --resolution 512 \
+  --center_crop \
+  --random_flip \
+  --train_batch_size 16 \
+  --dataloader_num_workers 6 \
+  --checkpointing_steps 2000 \
+  --gradient_accumulation_steps 8 \
+  --gradient_checkpointing \
+  --max_train_steps 200000 \
+  --learning_rate 1e-05 \
+  --max_grad_norm 1 \
+  --lr_scheduler constant_with_warmup
+  --lr_warmup_steps 2000 \
+  --output_dir runs/logs/ppt_sd15
+```
 
 
 
