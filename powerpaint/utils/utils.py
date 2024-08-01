@@ -8,8 +8,10 @@ import torch
 import torch.nn as nn
 import transformers
 
-# from mmagic.utils import try_import
-from mmengine import print_log
+from diffusers.utils import logging
+
+
+logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
 class TokenizerWrapper:
@@ -47,7 +49,7 @@ class TokenizerWrapper:
         )
 
         if from_config:
-            print_log(
+            logger.info(
                 "Tokenizers from Huggingface transformers do not support "
                 "'from_config'. Will call 'from_pretrained' instead "
                 "with the same argument.",
@@ -369,11 +371,11 @@ class EmbeddingLayerWithFixes(nn.Module):
 
         added_emb_info = [emb["name"] for emb in embeddings]
         added_emb_info = ", ".join(added_emb_info)
-        print_log(f"Successfully add external embeddings: {added_emb_info}.", "current")
+        logger.info(f"Successfully add external embeddings: {added_emb_info}.")
 
         if added_trainable_emb_info:
             added_trainable_emb_info = ", ".join(added_trainable_emb_info)
-            print_log("Successfully add trainable external embeddings: " f"{added_trainable_emb_info}", "current")
+            logger.info("Successfully add trainable external embeddings: " f"{added_trainable_emb_info}")
 
     def replace_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
         """Replace external input ids to 0.

@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# modified from https://github.com/TencentARC/BrushNet/blob/main/examples/brushnet/train_brushnet.py
 
 import argparse
 import contextlib
@@ -9,31 +10,30 @@ import os
 import random
 import shutil
 import time
-from pathlib import Path
-
-import accelerate
 import numpy as np
+from pathlib import Path
+from packaging import version
+from PIL import Image
+from tqdm.auto import tqdm
+from omegaconf import OmegaConf
+
 import torch
 import torch.nn.functional as F
 import torch.utils.checkpoint
-import transformers
+import accelerate
 from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import ProjectConfiguration, set_seed
+from accelerate import DistributedDataParallelKwargs
 from huggingface_hub import create_repo, upload_folder
-from mmagic.registry import DATASETS, pseudo_collate
-from packaging import version
-from PIL import Image
 from torchvision import transforms
-from tqdm.auto import tqdm
+import transformers
 from transformers import AutoTokenizer, CLIPTextModel, PretrainedConfig
 
 import diffusers
 from diffusers import (
     AutoencoderKL,
-    BrushNetModel,
     DDPMScheduler,
-    StableDiffusionBrushNetPipeline,
     UNet2DConditionModel,
     UniPCMultistepScheduler,
 )
@@ -43,22 +43,14 @@ from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_
 from diffusers.utils.import_utils import is_xformers_available
 from diffusers.utils.torch_utils import is_compiled_module
 
-# from powerpaint.dataset.Coco_aug_BLIP_doubleTextInv_dataset_LaMa_B import CocoBLIPaug_Dataset
-from powerpaint.datasets import LaionIterJsonDataset, OpenImageBLIPaug_Dataset, load_dataset
+from powerpaint.models import BrushNetModel
+from powerpaint.pipelines import StableDiffusionPowerPaintBrushNetPipeline
+import powerpaint.datasets
 from powerpaint.utils import TokenizerWrapper, add_tokens
 
 
 if is_wandb_available():
     pass
-
-
-def set_seed_zjh(seed):
-    torch.manual_seed(seed)  # for current cpu
-    torch.cuda.manual_seed(seed)  # for current gpu
-    torch.cuda.manual_seed_all(seed)  # for all gpus if you are using multi-GPU
-    np.random.seed(seed)  # Numpy module
-    random.seed(seed)  # Python random module
-
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.27.0.dev0")
@@ -78,7 +70,8 @@ def image_grid(imgs, rows, cols):
 
 
 def log_validation(
-    vae, text_encoder, tokenizer, unet, brushnet, args, accelerator, weight_dtype, step, is_final_validation=False
+    vae, text_encoder, tokenizer, unet,
+    brushnet, args, accelerator, weight_dtype, step, is_final_validation=False
 ):
     logger.info("Running validation... ")
 
@@ -91,7 +84,7 @@ def log_validation(
         args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision
     )
 
-    pipeline = StableDiffusionBrushNetPipeline.from_pretrained(
+    pipeline = StableDiffusionPowerPaintBrushNetPipeline.from_pretrained(
         args.pretrained_model_name_or_path,
         vae=vae,
         text_encoder=text_encoder,
@@ -159,26 +152,6 @@ def log_validation(
         return image_logs
 
 
-def import_model_class_from_model_name_or_path(pretrained_model_name_or_path: str, revision: str):
-    text_encoder_config = PretrainedConfig.from_pretrained(
-        pretrained_model_name_or_path,
-        subfolder="text_encoder",
-        revision=revision,
-    )
-    model_class = text_encoder_config.architectures[0]
-
-    if model_class == "CLIPTextModel":
-        from transformers import CLIPTextModel
-
-        return CLIPTextModel
-    elif model_class == "RobertaSeriesModelWithTransformation":
-        from diffusers.pipelines.alt_diffusion.modeling_roberta_series import RobertaSeriesModelWithTransformation
-
-        return RobertaSeriesModelWithTransformation
-    else:
-        raise ValueError(f"{model_class} is not supported.")
-
-
 def save_model_card(repo_id: str, image_logs=None, base_model=str, repo_folder=None):
     img_str = ""
     if image_logs is not None:
@@ -194,9 +167,9 @@ def save_model_card(repo_id: str, image_logs=None, base_model=str, repo_folder=N
             img_str += f"![images_{i})](./images_{i}.png)\n"
 
     model_description = f"""
-# brushnet-{repo_id}
+# PowerPaint-{repo_id}
 
-These are brushnet weights trained on {base_model} with new type of conditioning.
+These are PowerPaint weights trained on {base_model} with new type of conditioning.
 {img_str}
 """
     model_card = load_or_create_model_card(
@@ -213,7 +186,7 @@ These are brushnet weights trained on {base_model} with new type of conditioning
         "stable-diffusion-diffusers",
         "text-to-image",
         "diffusers",
-        "brushnet",
+        "PowerPaint",
         "diffusers-training",
     ]
     model_card = populate_model_card(model_card, tags=tags)
@@ -222,20 +195,34 @@ These are brushnet weights trained on {base_model} with new type of conditioning
 
 
 def parse_args(input_args=None):
-    parser = argparse.ArgumentParser(description="Simple example of a BrushNet training script.")
+    parser = argparse.ArgumentParser(
+        description="Simple example of a PowerPaint based on brushnet architecture training script.")
+
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="yaml for configuration",
+    )
     parser.add_argument(
         "--pretrained_model_name_or_path",
         type=str,
         default=None,
-        required=True,
+        required=False,
         help="Path to pretrained model or model identifier from huggingface.co/models.",
     )
     parser.add_argument(
-        "--brushnet_model_name_or_path",
+        "--powerpaint_model_name_or_path",
         type=str,
         default=None,
-        help="Path to pretrained brushnet model or model identifier from huggingface.co/models."
-        " If not specified brushnet weights are initialized from unet.",
+        help="Path to pretrained powerpaint model or model identifier from huggingface.co/models."
+        " If not specified powerpaint weights are initialized from unet.",
+    )
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default="powerpaint-model",
+        help="The output directory where the model predictions and checkpoints will be written.",
     )
     parser.add_argument(
         "--revision",
@@ -255,12 +242,6 @@ def parse_args(input_args=None):
         type=str,
         default=None,
         help="Pretrained tokenizer name or path if not the same as model_name",
-    )
-    parser.add_argument(
-        "--output_dir",
-        type=str,
-        default="brushnet-model",
-        help="The output directory where the model predictions and checkpoints will be written.",
     )
     parser.add_argument(
         "--cache_dir",
@@ -446,16 +427,7 @@ def parse_args(input_args=None):
         default=None,
         help="The config of the Dataset, leave as None if there's only one config.",
     )
-    parser.add_argument(
-        "--train_data_dir",
-        type=str,
-        default=None,
-        help=(
-            "A folder containing the training data. Folder contents must follow the structure described in"
-            " https://huggingface.co/docs/datasets/image_dataset#imagefolder. In particular, a `metadata.jsonl` file"
-            " must exist to provide the captions for the images. Ignored if `dataset_name` is specified."
-        ),
-    )
+
     parser.add_argument(
         "--image_column", type=str, default="image", help="The column of the dataset containing the target image."
     )
@@ -463,7 +435,7 @@ def parse_args(input_args=None):
         "--conditioning_image_column",
         type=str,
         default="conditioning_image",
-        help="The column of the dataset containing the brushnet conditioning image.",
+        help="The column of the dataset containing the powerpaint conditioning image.",
     )
     parser.add_argument(
         "--caption_column",
@@ -500,7 +472,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--validation_image",
         type=str,
-        default=["examples/brushnet/src/test_image.jpg"],
+        default=["examples/test_image.jpg"],
         nargs="+",
         help=(
             "A set of paths to the paintingnet conditioning image be evaluated every `--validation_steps`"
@@ -512,7 +484,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--validation_mask",
         type=str,
-        default=["examples/brushnet/src/test_mask.jpg"],
+        default=["examples/test_mask.jpg"],
         nargs="+",
         help=(
             "A set of paths to the paintingnet conditioning image be evaluated every `--validation_steps`"
@@ -540,7 +512,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--tracker_project_name",
         type=str,
-        default="train_brushnet",
+        default="train_powerpaint_brushnet",
         help=(
             "The `project_name` argument passed to Accelerator.init_trackers for"
             " more information see https://huggingface.co/docs/accelerate/v0.17.0/en/package_reference/accelerator#accelerate.Accelerator"
@@ -549,7 +521,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--random_mask",
         action="store_true",
-        help=("Training BrushNet with random mask"),
+        help=("Training PowerPaint with random mask"),
     )
 
     if input_args is not None:
@@ -557,11 +529,11 @@ def parse_args(input_args=None):
     else:
         args = parser.parse_args()
 
-    if args.dataset_name is None and args.train_data_dir is None:
-        raise ValueError("Specify either `--dataset_name` or `--train_data_dir`")
-
-    if args.dataset_name is not None and args.train_data_dir is not None:
-        raise ValueError("Specify only one of `--dataset_name` or `--train_data_dir`")
+    # use omegaconf to manage configurations
+    if args.config is not None:
+        config = OmegaConf.load(args.config)
+        for k, v in config.items():
+            args.__dict__[k] = v
 
     if args.proportion_empty_prompts < 0 or args.proportion_empty_prompts > 1:
         raise ValueError("`--proportion_empty_prompts` must be in the range [0, 1].")
@@ -590,121 +562,6 @@ def parse_args(input_args=None):
         )
 
     return args
-
-
-def make_train_dataset(args, tokenizer, accelerator):
-    # Get the datasets: you can either provide your own training and evaluation files (see below)
-    # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
-
-    # In distributed training, the load_dataset function guarantees that only one local process can concurrently
-    # download the dataset.
-    if args.dataset_name is not None:
-        # Downloading and loading a dataset from the hub.
-        dataset = load_dataset(
-            args.dataset_name,
-            args.dataset_config_name,
-            cache_dir=args.cache_dir,
-        )
-    else:
-        if args.train_data_dir is not None:
-            dataset = load_dataset(
-                args.train_data_dir,
-                cache_dir=args.cache_dir,
-            )
-        # See more about loading custom images at
-        # https://huggingface.co/docs/datasets/v2.0.0/en/dataset_script
-
-    # Preprocessing the datasets.
-    # We need to tokenize inputs and targets.
-    column_names = dataset["train"].column_names
-
-    # 6. Get the column names for input/target.
-    if args.image_column is None:
-        image_column = column_names[0]
-        logger.info(f"image column defaulting to {image_column}")
-    else:
-        image_column = args.image_column
-        if image_column not in column_names:
-            raise ValueError(
-                f"`--image_column` value '{args.image_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
-            )
-
-    if args.caption_column is None:
-        caption_column = column_names[1]
-        logger.info(f"caption column defaulting to {caption_column}")
-    else:
-        caption_column = args.caption_column
-        if caption_column not in column_names:
-            raise ValueError(
-                f"`--caption_column` value '{args.caption_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
-            )
-
-    if args.conditioning_image_column is None:
-        conditioning_image_column = column_names[2]
-        logger.info(f"conditioning image column defaulting to {conditioning_image_column}")
-    else:
-        conditioning_image_column = args.conditioning_image_column
-        if conditioning_image_column not in column_names:
-            raise ValueError(
-                f"`--conditioning_image_column` value '{args.conditioning_image_column}' not found in dataset columns. Dataset columns are: {', '.join(column_names)}"
-            )
-
-    def tokenize_captions(examples, is_train=True):
-        captions = []
-        for caption in examples[caption_column]:
-            if random.random() < args.proportion_empty_prompts:
-                captions.append("")
-            elif isinstance(caption, str):
-                captions.append(caption)
-            elif isinstance(caption, (list, np.ndarray)):
-                # take a random caption if there are multiple
-                captions.append(random.choice(caption) if is_train else caption[0])
-            else:
-                raise ValueError(
-                    f"Caption column `{caption_column}` should contain either strings or lists of strings."
-                )
-        inputs = tokenizer(
-            captions, max_length=tokenizer.model_max_length, padding="max_length", truncation=True, return_tensors="pt"
-        )
-        return inputs.input_ids
-
-    image_transforms = transforms.Compose(
-        [
-            transforms.Resize(args.resolution, interpolation=transforms.InterpolationMode.BILINEAR),
-            transforms.CenterCrop(args.resolution),
-            transforms.ToTensor(),
-            transforms.Normalize([0.5], [0.5]),
-        ]
-    )
-
-    conditioning_image_transforms = transforms.Compose(
-        [
-            transforms.Resize(args.resolution, interpolation=transforms.InterpolationMode.BILINEAR),
-            transforms.CenterCrop(args.resolution),
-            transforms.ToTensor(),
-        ]
-    )
-
-    def preprocess_train(examples):
-        images = [image.convert("RGB") for image in examples[image_column]]
-        images = [image_transforms(image) for image in images]
-
-        conditioning_images = [image.convert("RGB") for image in examples[conditioning_image_column]]
-        conditioning_images = [conditioning_image_transforms(image) for image in conditioning_images]
-
-        examples["pixel_values"] = images
-        examples["conditioning_pixel_values"] = conditioning_images
-        examples["input_ids"] = tokenize_captions(examples)
-
-        return examples
-
-    with accelerator.main_process_first():
-        if args.max_train_samples is not None:
-            dataset["train"] = dataset["train"].shuffle(seed=args.seed).select(range(args.max_train_samples))
-        # Set the training transforms
-        train_dataset = dataset["train"].with_transform(preprocess_train)
-
-    return train_dataset
 
 
 def collate_fn(examples):
@@ -736,10 +593,8 @@ def main(args):
 
     logging_dir = Path(args.output_dir, args.logging_dir)
 
-    accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=logging_dir)
-    from accelerate import DistributedDataParallelKwargs
-
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=logging_dir)
     accelerator = Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         mixed_precision=args.mixed_precision,
@@ -764,8 +619,8 @@ def main(args):
 
     # If passed along, set the training seed now.
     if args.seed is not None:
+        torch.manual_seed(seed)
         set_seed(args.seed)
-        set_seed_zjh(args.seed)
         print("seed:", args.seed)
 
     # Handle the repository creation
@@ -801,9 +656,9 @@ def main(args):
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision, variant=args.variant
     )
 
-    if args.brushnet_model_name_or_path:
-        logger.info("Loading existing brushnet weights")
-        brushnet = BrushNetModel.from_pretrained(args.brushnet_model_name_or_path)
+    if args.powerpaint_model_name_or_path:
+        logger.info("Loading existing powerpaint weights")
+        brushnet = BrushNetModel.from_pretrained(args.powerpaint_model_name_or_path)
     else:
         logger.info("Initializing brushnet weights from unet")
         brushnet = BrushNetModel.from_unet(unet)
@@ -825,7 +680,7 @@ def main(args):
                     weights.pop()
                     model = models[i]
 
-                    sub_dir = "brushnet"
+                    sub_dir = "powerpaint"
                     model.save_pretrained(os.path.join(output_dir, sub_dir))
 
                     i -= 1
@@ -836,7 +691,7 @@ def main(args):
                 model = models.pop()
 
                 # load diffusers style into model
-                load_model = BrushNetModel.from_pretrained(input_dir, subfolder="brushnet")
+                load_model = BrushNetModel.from_pretrained(input_dir, subfolder="powerpaint")
                 model.register_to_config(**load_model.config)
 
                 model.load_state_dict(load_model.state_dict())
@@ -898,42 +753,10 @@ def main(args):
     else:
         optimizer_class = torch.optim.AdamW
 
-    # backend_args_laion = {"backend": "petrel", "path_mapping": {"/": "laion5b:s3://laion5b/"}}
-    pipeline_laion = [
-        {
-            "type": "LoadImageFromFile",
-            "key": "img",
-            "channel_order": "rgb",
-            "backend_args": "backend_args_laion",
-        }
-    ]
-    train_transforms = transforms.Compose(
-        [
-            transforms.Resize(args.resolution, interpolation=transforms.InterpolationMode.BILINEAR),
-            transforms.CenterCrop(args.resolution),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            transforms.Normalize([0.5], [0.5]),
-        ]
-    )
-
-    backend_args_open = {
-        "backend": "petrel",
-        "path_mapping": {"/": "openmmlab:s3://openmmlab/datasets/detection/OpenImages/OpenImages/train/"},
-    }
-    pipeline_open = [
-        {"type": "LoadImageFromFile", "key": "img", "channel_order": "rgb", "backend_args": backend_args_open},
-    ]
-
-    # backend_args_coco = dict(
-    #     backend="petrel", path_mapping={"/": "detection:s3://openmmlab/datasets/detection/coco/train2017/"}
-    # )
-    # pipeline_coco = [
-    #     dict(type="LoadImageFromFile", key="img", channel_order="rgb", backend_args=backend_args_coco),
-    # ]
-
+    # Load the tokenizer and transforms used for dataloader
     data_tokenizer = TokenizerWrapper(
-        from_pretrained=args.pretrained_model_name_or_path, subfolder="tokenizer", revision=None
+        from_pretrained=args.pretrained_model_name_or_path,
+        subfolder="tokenizer", revision=None
     )
     add_tokens(
         tokenizer=data_tokenizer,
@@ -942,49 +765,34 @@ def main(args):
         initialize_tokens=["a", "a", "a", "a"],
         num_vectors_per_token=10,
     )
-    dataset_open = OpenImageBLIPaug_Dataset(
-        pipeline_open,
-        aesthetic_score_threshold=0.1,  # NOTE: just for debug
-        bufsize=None,
-        args=args,
-        data_tokenizer=data_tokenizer,
-    )
-    # dataset_coco = CocoBLIPaug_Dataset(
-    #     pipeline_coco,
-    #     aesthetic_score_threshold=0.1,  # NOTE: just for debug
-    #     bufsize=None,
-    #     args=args,
-    #     data_tokenizer=data_tokenizer,
-    # )
-    dataset_laion = LaionIterJsonDataset(
-        "laion5b:s3://llm-process/laion-5b/format/v020/laion2B-en/",
-        pipeline_laion,
-        aesthetic_score_threshold=5,
-        # clip_score_threshold = 0.32,  # NOTE: just for debug
-        bufsize=100,
-        transforms=train_transforms,
-        args=args,
-        data_tokenizer=data_tokenizer,
-    )
-    dataset = {
-        "type": "ProbPickingDataset",
-        "datasets": [
-            {"dataset": dataset_open, "prob": 0.4},  # 0.4
-            # {"dataset": dataset_coco, "prob": 0.1},  # 0.1
-            {"dataset": dataset_laion, "prob": 0.6},  # 0.5
-        ],
-    }
+    train_transforms = transforms.Compose([
+        transforms.Resize(
+            args.resolution, interpolation=transforms.InterpolationMode.BILINEAR),
+        transforms.CenterCrop(args.resolution),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize([0.5], [0.5]),
+    ])
 
-    dataset = DATASETS.build(dataset)
+    # preparing datasets and dataloader for training.
+    # support loading multiple datasets in a single dataloader.
+    datasets_list = []
+    for d in args.train_data.datasets:
+        dataset_class = getattr(powerpaint.dataset, d.dataset_class)
+        dataset_ = dataset_class(
+            train_transforms, data_tokenizer, **d)
+        datasets_list.append({dataset_, "prob": d.prob})
+
+    train_dataset = ProbPickingDataset(datasets_list)
 
     with accelerator.main_process_first():
         if args.max_train_samples is not None:
-            dataset = dataset.shuffle(seed=args.seed).select(range(args.max_train_samples))
-        # Set the training transforms
-        train_dataset = dataset
-    # dataset = dataset_laion
+            train_dataset = train_dataset.shuffle(seed=args.seed).select(range(args.max_train_samples))
+
     train_dataloader = torch.utils.data.DataLoader(
-        dataset, batch_size=args.train_batch_size, num_workers=args.dataloader_num_workers, collate_fn=pseudo_collate
+        train_dataset, batch_size=args.train_batch_size,
+        num_workers=args.dataloader_num_workers,
+        collate_fn=pseudo_collate
     )
     text_encoder.requires_grad_(False)
     text_encoder.text_model.embeddings.token_embedding.trainable_embeddings.requires_grad_(True)
@@ -1030,7 +838,6 @@ def main(args):
     # Move vae, unet and text_encoder to device and cast to weight_dtype
     vae.to(accelerator.device, dtype=weight_dtype)
     unet.to(accelerator.device, dtype=weight_dtype)
-    # text_encoder.to(accelerator.device, dtype=weight_dtype)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
@@ -1102,19 +909,15 @@ def main(args):
 
     image_logs = None
     for epoch in range(first_epoch, args.num_train_epochs):
-        # ipdb.set_trace()
         start = 0.0
         IO_start = 0.0
         end = 0.0
         for step, batch in enumerate(train_dataloader):
-            #     # ipdb.set_trace()
             torch.cuda.synchronize()
             start = end
             end = time.time()
             all_time = end - start
             IO_time = end - IO_start
-            # print("begin",accelerator.device)
-            # print(batch["input_idsA"],accelerator.device)
             with accelerator.accumulate(brushnet):
                 # Convert images to latent space
                 input_img = torch.cat(batch["pixel_values"], dim=0)
@@ -1123,10 +926,7 @@ def main(args):
 
                 mask = torch.cat(batch["mask"], dim=0)
                 mask_image = input_img * (mask < 0.5) - mask
-
-                # mask_i = transforms.ToPILImage()(mask[0:1,:,:,:].squeeze(0))
                 mask = torch.nn.functional.interpolate(mask, size=(64, 64))
-
                 mask_image_latents = vae.encode(mask_image.to(weight_dtype)).latent_dist.sample()
                 mask_image_latents = (mask_image_latents * vae.config.scaling_factor).to(weight_dtype)
 
@@ -1135,6 +935,7 @@ def main(args):
                 # Sample noise that we'll add to the latents
                 noise = torch.randn_like(latents)
                 bsz = latents.shape[0]
+
                 # Sample a random timestep for each image
                 timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device)
                 timesteps = timesteps.long()

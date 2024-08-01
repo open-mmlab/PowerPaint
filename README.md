@@ -162,44 +162,16 @@ Basically, we recommend to use 0.5-0.6 for fitting degree when you want to gener
 
 ## Training
 
-We suggest using PowerPaint-V2 version, which is built upon BrushNet and requires smaller batch size for training.
-You can train it with the following command,
+1. Prepare training data. You may need to rewrite [`Datasets`](./powerpaint/datasets/__init__.py) by yourself if you use different formats and storage methods for training datasets. Here, we use petreloss to read training dataset from cloud storages.
+
+2. Start training. We suggest using PowerPaint-V2 version, which is built upon BrushNet and requires smaller batch size for training. You can train it with the following command,
 ```shell
-accelerate launch train_ppt_brushnet.py \
-  --pretrained_model_name_or_path runwayml/stable-diffusion-inpainting \
-  --output_dir runs/logs/ppt_brushnet \
-  --train_data_dir data/ \
-  --resolution 512 \
-  --learning_rate 1e-5 \
-  --train_batch_size 6 \
-  --dataloader_num_workers 32 \
-  --gradient_accumulation_steps 10 \
-  --checkpointing_steps 2000 \
-  --tracker_project_name ppt_brushnet \
-  --report_to tensorboard \
-  --resume_from_checkpoint latest \
-  --validation_steps 1000
+accelerate launch train_ppt_brushnet.py --config configs/pptv2_bn.yaml
 ```
 
-For PowerPaint-V1 version, you can train it with the following command,
+PowerPaint-V1 version often requires much larger training batch size to converge (e.g., 1024). You can train it with the following command,
 ```shell
-accelerate launch train_ppt_sd15.py \
-  --pretrained_model_name_or_path runwayml/stable-diffusion-inpainting \
-  --use_ema \
-  --resolution 512 \
-  --center_crop \
-  --random_flip \
-  --train_batch_size 16 \
-  --dataloader_num_workers 6 \
-  --checkpointing_steps 2000 \
-  --gradient_accumulation_steps 8 \
-  --gradient_checkpointing \
-  --max_train_steps 200000 \
-  --learning_rate 1e-05 \
-  --max_grad_norm 1 \
-  --lr_scheduler constant_with_warmup
-  --lr_warmup_steps 2000 \
-  --output_dir runs/logs/ppt_sd15
+accelerate launch train_ppt_sd15.py --config configs/pptv1.yaml
 ```
 
 

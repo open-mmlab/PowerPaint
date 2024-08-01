@@ -34,7 +34,6 @@ from accelerate.utils import ProjectConfiguration, set_seed
 from huggingface_hub import create_repo, upload_folder
 from mmagic.registry import DATASETS
 from mmagic.utils import register_all_modules
-from mmengine.dataset import pseudo_collate
 from packaging import version
 from PIL import Image
 from torch.nn.functional import normalize
@@ -725,14 +724,16 @@ def main():
         train_dataset = dataset
     # dataset = dataset_laion
     train_dataloader = torch.utils.data.DataLoader(
-        dataset, batch_size=args.train_batch_size, num_workers=args.dataloader_num_workers, collate_fn=pseudo_collate
+        dataset,
+        batch_size=args.train_batch_size,
+        num_workers=args.dataloader_num_workers,
+        collate_fn=mmengine.pseudo_collate,
     )
 
     unet = UNet2DConditionModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.non_ema_revision
     )
 
-    # zjh 4to9
     old_weights = unet.conv_in.weight
     old_bias = unet.conv_in.bias
     new_conv1 = nn.Conv2d(
@@ -760,7 +761,6 @@ def main():
             args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
         )
 
-        # zjh 4to9
         old_weights_ema = ema_unet.conv_in.weight
         old_bias_ema = ema_unet.conv_in.bias
         new_conv1_ema = nn.Conv2d(
@@ -968,10 +968,7 @@ def main():
     text_encoder.to(accelerator.device, dtype=torch.float32)
     # text_encoder.text_model.embeddings.token_embedding.trainable_embeddings.to(accelerator.device, dtype=torch.float32)
 
-    # zjh
-    # vae.to(accelerator.device, dtype=weight_dtype)
     vae.to(accelerator.device, dtype=torch.float32)
-    # print(11)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
