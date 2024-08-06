@@ -6,23 +6,29 @@ train_data:
   datasets: [
     {
       name: "laion5b",
-      prob: 0.4, # the probability of presence during training
+      # the probability of presence during training
+      prob: 0.4,
       dataset_class: "LaionIterJsonDataset",
+      # you may need to change the path to your own path
+      client_prefix: "laion5b:",
       anno_root: "laion5b:s3://llm-process/laion-5b/format/v020/laion2B-en/",
       random_mask_root: "data/lama_mask/",
-      aethetic_score_threshold: 0.5,
+      aethetic_score_threshold: 5,
       bufsize: 100,
       resolution: 512,
-      transforms: ["Resize", "CenterCrop", "RandomHorizontalFlip", "ToTensor", "Normalize"],
     },
     {
       name: "openimages",
       prob: 0.6, # the probability of presence during training
       dataset_class: "OpenImageBLIPaug_Dataset",
-      anno_root: "openmmlab:s3://openmmlab/datasets/detection/OpenImages/OpenImages/train/",
+      # you may need to change the path to your own path
+      image_root: "openmmlab:s3://openmmlab/datasets/detection/OpenImages/OpenImages/train/",
+      mask_root: "data/openimagev6/mask/",
+      # prompt that describes segmented objects
+      anno_root: "data/openimagev6/prompt",
       aethetic_score_threshold: 0.1,
-      bufsize: None,
-
+      bufsize: null,
+      resolution: 512,
     }
   ]
 

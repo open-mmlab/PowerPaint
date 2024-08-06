@@ -1,4 +1,7 @@
 import os
+import os.path as osp
+
+from torch.utils.data import get_worker_info
 
 
 SUPPORTED_SUFFIX = [
@@ -25,6 +28,7 @@ SUPPORTED_SUFFIX = [
 ]
 SAVE_LOG = os.environ.get("SAVE_LOG", False)
 LOG_DIR = os.environ.get("LOG_DIR", "./logs")
+INVALID_OPEN_FLAG = "a 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911"
 
 
 def save_log(log):

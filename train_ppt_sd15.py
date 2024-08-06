@@ -727,7 +727,6 @@ def main():
         dataset,
         batch_size=args.train_batch_size,
         num_workers=args.dataloader_num_workers,
-        collate_fn=mmengine.pseudo_collate,
     )
 
     unet = UNet2DConditionModel.from_pretrained(
@@ -900,24 +899,6 @@ def main():
         optimizer_cls = bnb.optim.AdamW8bit
     else:
         optimizer_cls = torch.optim.AdamW
-
-    # optimizer = optimizer_cls(
-    #     list(unet.parameters())+list(text_encoder.text_model.embeddings.token_embedding.trainable_embeddings.parameters()),
-    #     lr=args.learning_rate,
-    #     betas=(args.adam_beta1, args.adam_beta2),
-    #     weight_decay=args.adam_weight_decay,
-    #     eps=args.adam_epsilon,
-    # )
-
-    # DataLoaders creation:
-    #
-    # import ipdb
-    # ipdb.set_trace()
-    # iterator = iter(train_dataloader)
-    # data_info = next(iterator)
-    # print(data_info)
-    # #
-    # print(9)
 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False

@@ -1,10 +1,10 @@
 # 🖌️ PowerPaint: A Versatile Image Inpainting Model
 
-[**A Task is Worth One Word: Learning with Task Prompts for High-Quality Versatile Image Inpainting**](https://arxiv.org/abs/2312.03594)
+[**[ECCV 2024] | A Task is Worth One Word: Learning with Task Prompts for High-Quality Versatile Image Inpainting**](https://arxiv.org/abs/2312.03594)
 
-[Junhao Zhuang](https://github.com/zhuang2002), [Yanhong Zeng](https://zengyh1900.github.io/), [Wenran Liu](https://github.com/liuwenran), [Chun Yuan†](https://www.sigs.tsinghua.edu.cn/yc2_en/main.htm), [Kai Chen†](https://chenkai.site/)
+[Junhao Zhuang](https://github.com/zhuang2002), [♦Yanhong Zeng](https://zengyh1900.github.io/), [Wenran Liu](https://github.com/liuwenran), [†Chun Yuan](https://www.sigs.tsinghua.edu.cn/yc2_en/main.htm), [†Kai Chen](https://chenkai.site/)
 
-(†corresponding author)
+(♦project lead, †corresponding author)
 
 [![arXiv](https://img.shields.io/badge/arXiv-2312.03594-b31b1b.svg)](https://arxiv.org/abs/2312.03594)
 [![Project Page](https://img.shields.io/badge/PowerPaint-Website-green)](https://powerpaint.github.io/)
@@ -162,7 +162,7 @@ Basically, we recommend to use 0.5-0.6 for fitting degree when you want to gener
 
 ## Training
 
-1. Prepare training data. You may need to rewrite [`Datasets`](./powerpaint/datasets/__init__.py) by yourself if you use different formats and storage methods for training datasets. Here, we use petreloss to read training dataset from cloud storages.
+1. Prepare training data. You may need to rewrite [`Datasets`](./powerpaint/datasets/__init__.py）per your need (e.g., data and storage formats). Here, we use petreloss to read training dataset from cloud storages. Besides, the recipe of datasets for training a versatile model can be tricky but intuitive.
 
 2. Start training. We suggest using PowerPaint-V2 version, which is built upon BrushNet and requires smaller batch size for training. You can train it with the following command,
 ```shell

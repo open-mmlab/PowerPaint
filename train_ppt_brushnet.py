@@ -7,30 +7,28 @@ import gc
 import logging
 import math
 import os
-import random
 import shutil
 import time
-import numpy as np
 from pathlib import Path
-from packaging import version
-from PIL import Image
-from tqdm.auto import tqdm
-from omegaconf import OmegaConf
 
+import accelerate
 import torch
 import torch.nn.functional as F
 import torch.utils.checkpoint
-import accelerate
-from accelerate import Accelerator
+import transformers
+from accelerate import Accelerator, DistributedDataParallelKwargs
 from accelerate.logging import get_logger
 from accelerate.utils import ProjectConfiguration, set_seed
-from accelerate import DistributedDataParallelKwargs
 from huggingface_hub import create_repo, upload_folder
+from omegaconf import OmegaConf
+from packaging import version
+from PIL import Image
 from torchvision import transforms
-import transformers
-from transformers import AutoTokenizer, CLIPTextModel, PretrainedConfig
+from tqdm.auto import tqdm
+from transformers import AutoTokenizer, CLIPTextModel
 
 import diffusers
+import powerpaint.datasets
 from diffusers import (
     AutoencoderKL,
     DDPMScheduler,
@@ -42,10 +40,9 @@ from diffusers.utils import check_min_version, is_wandb_available
 from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_card
 from diffusers.utils.import_utils import is_xformers_available
 from diffusers.utils.torch_utils import is_compiled_module
-
+from powerpaint.datasets import ProbPickingDataset
 from powerpaint.models import BrushNetModel
 from powerpaint.pipelines import StableDiffusionPowerPaintBrushNetPipeline
-import powerpaint.datasets
 from powerpaint.utils import TokenizerWrapper, add_tokens
 
 
@@ -70,8 +67,7 @@ def image_grid(imgs, rows, cols):
 
 
 def log_validation(
-    vae, text_encoder, tokenizer, unet,
-    brushnet, args, accelerator, weight_dtype, step, is_final_validation=False
+    vae, text_encoder, tokenizer, unet, brushnet, args, accelerator, weight_dtype, step, is_final_validation=False
 ):
     logger.info("Running validation... ")
 
@@ -196,7 +192,8 @@ These are PowerPaint weights trained on {base_model} with new type of conditioni
 
 def parse_args(input_args=None):
     parser = argparse.ArgumentParser(
-        description="Simple example of a PowerPaint based on brushnet architecture training script.")
+        description="Simple example of a PowerPaint based on brushnet architecture training script."
+    )
 
     parser.add_argument(
         "--config",
@@ -593,7 +590,7 @@ def main(args):
 
     logging_dir = Path(args.output_dir, args.logging_dir)
 
-    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=False)  # True)
     accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=logging_dir)
     accelerator = Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
@@ -619,7 +616,7 @@ def main(args):
 
     # If passed along, set the training seed now.
     if args.seed is not None:
-        torch.manual_seed(seed)
+        torch.manual_seed(args.seed)
         set_seed(args.seed)
         print("seed:", args.seed)
 
@@ -755,8 +752,7 @@ def main(args):
 
     # Load the tokenizer and transforms used for dataloader
     data_tokenizer = TokenizerWrapper(
-        from_pretrained=args.pretrained_model_name_or_path,
-        subfolder="tokenizer", revision=None
+        from_pretrained=args.pretrained_model_name_or_path, subfolder="tokenizer", revision=None
     )
     add_tokens(
         tokenizer=data_tokenizer,
@@ -765,23 +761,23 @@ def main(args):
         initialize_tokens=["a", "a", "a", "a"],
         num_vectors_per_token=10,
     )
-    train_transforms = transforms.Compose([
-        transforms.Resize(
-            args.resolution, interpolation=transforms.InterpolationMode.BILINEAR),
-        transforms.CenterCrop(args.resolution),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize([0.5], [0.5]),
-    ])
+    train_transforms = transforms.Compose(
+        [
+            transforms.Resize(args.resolution, interpolation=transforms.InterpolationMode.BILINEAR),
+            transforms.CenterCrop(args.resolution),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize([0.5], [0.5]),
+        ]
+    )
 
     # preparing datasets and dataloader for training.
     # support loading multiple datasets in a single dataloader.
     datasets_list = []
     for d in args.train_data.datasets:
-        dataset_class = getattr(powerpaint.dataset, d.dataset_class)
-        dataset_ = dataset_class(
-            train_transforms, data_tokenizer, **d)
-        datasets_list.append({dataset_, "prob": d.prob})
+        dataset_class = getattr(powerpaint.datasets, d.dataset_class)
+        dataset_ = dataset_class(train_transforms, data_tokenizer, **d)
+        datasets_list.append({"dataset": dataset_, "prob": d.prob})
 
     train_dataset = ProbPickingDataset(datasets_list)
 
@@ -790,13 +786,16 @@ def main(args):
             train_dataset = train_dataset.shuffle(seed=args.seed).select(range(args.max_train_samples))
 
     train_dataloader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.train_batch_size,
+        train_dataset,
+        batch_size=args.train_batch_size,
         num_workers=args.dataloader_num_workers,
-        collate_fn=pseudo_collate
     )
+
+    # set trainable parameters
     text_encoder.requires_grad_(False)
     text_encoder.text_model.embeddings.token_embedding.trainable_embeddings.requires_grad_(True)
     text_encoder.train()
+    # 1. trainable embedding + 2. trainable model
     optimizer = optimizer_class(
         list(brushnet.parameters())
         + list(text_encoder.text_model.embeddings.token_embedding.trainable_embeddings.parameters()),
@@ -908,7 +907,7 @@ def main(args):
     )
 
     image_logs = None
-    for epoch in range(first_epoch, args.num_train_epochs):
+    for _ in range(first_epoch, args.num_train_epochs):
         start = 0.0
         IO_start = 0.0
         end = 0.0

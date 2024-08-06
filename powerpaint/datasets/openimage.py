@@ -1,4 +1,5 @@
 import os
+import pdb
 import random
 import time
 
@@ -10,10 +11,45 @@ from PIL import Image
 from torch.utils.data import IterableDataset
 from torchvision import transforms
 
-from .utils import save_log
+from .utils import INVALID_OPEN_FLAG, save_log
 
 
-def random_warponly(img, sigma=15, patch=40):  # 15
+try:
+    from petrel_client.client import Client
+except ImportError:
+    print("Failed to import petrel_client. Please install it if you are using petrel-oss.")
+
+
+def augment_images(image, mask, resolution):
+    mask[mask > 128] = 255
+    mask[mask <= 128] = 0
+    mask = Image.fromarray(mask.astype("uint8"))
+    resize = transforms.Resize((resolution))
+    image = resize(image)
+    mask = resize(mask)
+
+    crop = RandomCrop(resolution)
+    image, mask = crop(image, mask)
+
+    # 50% chance of applying horizontal flip
+    if random.random() > 0.5:
+        image = transforms.functional.hflip(image)
+        mask = transforms.functional.hflip(mask)
+
+    # convert the image and mask to tensors
+    toT = transforms.ToTensor()
+    image = toT(image)
+    mask = toT(mask)
+    mask[mask != 0] = 1
+
+    # normalize the image with mean and std
+    normalize = transforms.Normalize(mean=[0.5], std=[0.5])
+    image = normalize(image)
+
+    return image.unsqueeze(0), mask.unsqueeze(0)
+
+
+def random_warponly(img, sigma=15, patch=40):
     # Get the image shape
     if np.max(img) > 128:
         img = img / 255
@@ -43,73 +79,18 @@ def random_warponly(img, sigma=15, patch=40):  # 15
 
 
 def get_min_bounding_box(mask, pp=5):
-    # print(np.shape(mask))
     H = np.shape(mask)[0]
     W = np.shape(mask)[1]
-    # 获取掩码中非零元素的索引
     nonzero_indices = np.nonzero(mask)
     if len(nonzero_indices) == 0:
         return mask
-    # 获取最小边界框的左上角和右下角坐标
     min_row = max(np.min(nonzero_indices[0]) - pp, 0)
     max_row = min(np.max(nonzero_indices[0]) + pp, H)
     min_col = max(np.min(nonzero_indices[1]) - pp, 0)
     max_col = min(np.max(nonzero_indices[1]) + pp, W)
-    # 创建最小边界框
     bounding_box = np.zeros_like(mask)
     bounding_box[min_row : max_row + 1, min_col : max_col + 1] = 255
     return bounding_box
-
-
-def pool_num(img, pool_step=10):  # 15
-    warped = img
-    # print(np.max(warped))
-    warped[warped > 0.5] = 1.0
-    warped[warped <= 0.5] = 0.0
-
-    rand_it = pool_step
-    rand_it = int(max(0, rand_it))
-    kernel = np.ones((3, 3))
-    if rand_it != 0:
-        warped = cv2.dilate(src=warped, kernel=kernel, iterations=rand_it)
-
-    warped = warped
-    return warped
-
-
-def random_warp(img, sigma=15, patch=60, pool_step=10):  # 15
-    # Get the image shape
-    if np.max(img) > 128:
-        img = img / 255
-    h, w = img.shape[:2]
-
-    # Generate random displacement vectors
-    dx = np.random.normal(0, sigma, (int(w / patch), int(h / patch)))
-    dy = np.random.normal(0, sigma, (int(w / patch), int(h / patch)))
-
-    dx = cv2.resize(dx, dsize=(w, h), interpolation=cv2.INTER_CUBIC)
-    dy = cv2.resize(dy, dsize=(w, h), interpolation=cv2.INTER_CUBIC)
-
-    # Add the displacements to an identity grid
-    x, y = np.meshgrid(np.arange(w), np.arange(h))
-    map_x = (x + dx).astype(np.float32)
-    map_y = (y + dy).astype(np.float32)
-
-    # Warp the image using the displacement map
-    warped = cv2.remap(img, map_x, map_y, cv2.INTER_LINEAR)
-
-    warped += img
-    warped[warped > 0.5] = 1.0
-    warped[warped <= 0.5] = 0.0
-
-    rand_it = pool_step
-    rand_it = int(max(0, rand_it))
-    kernel = np.ones((3, 3))
-    if rand_it != 0:
-        warped = cv2.dilate(src=warped, kernel=kernel, iterations=rand_it)
-
-    warped = warped * 255.0
-    return warped
 
 
 class RandomCrop(object):
@@ -125,74 +106,59 @@ class RandomCrop(object):
 
 
 class OpenImageBLIPaug_Dataset(IterableDataset):
+    """Load data from OpenImages.
+    PowerPaint mainly uses openimages with its mask as training data for:
+        - text-based object inpainting w/ object segmentation masks,,
+        - shape-guided object inpainting w/ object segmentation masks,
+        - context-aware (i.e., text-free) image inpainting, but w/ random object masks from other instances.
+    """
+
     def __init__(
         self,
-        pipeline,
+        transforms,
+        data_tokenizer,
+        anno_root=None,
+        image_root=None,
+        mask_root=None,
         bufsize=None,
         clip_score_threshold=None,
         aesthetic_score_threshold=0.5,
+        resolution=None,
         deterministic=False,
-        transforms=None,
-        args=None,
-        data_tokenizer=None,
+        use_petreloss=False,
+        **kwargs,
     ):
         super().__init__()
-        # for data loading
-        self.client = Client(enable_multi_cluster=True)
+        assert anno_root is not None, "Please provide the path to the annotation files."
 
-        # for data shuffle
+        # for data loading
+        self.client = Client(enable_multi_cluster=True, enable_mc=True)
+
+        # loading prompts
+        self.anno_list = []
+        for i in range(16):
+            with open(os.path.join(anno_root, f"prompt_anno_{i}.txt"), "r", encoding="utf-8") as f:
+                data = f.read()
+            f.close()
+            data = data.split("\n")
+            self.anno_list += data[:-1]
+        random.shuffle(self.anno_list)
+
+        # segmentation mask used for training
+        self.mask_root = mask_root
+        self.image_root = image_root
+
+        # for data sample
         self.bufsize = bufsize
+        self.resolution = resolution
+        self.epoch = -1
+        self.deterministic = deterministic
+        self.tokenizer = data_tokenizer
 
         # for data filter
         self.aesthetic_score_threshold = aesthetic_score_threshold
         self.clip_score_threshold = clip_score_threshold
-
-        # for data pipeline
-        self.pipeline = Compose(pipeline)
-
-        # for shard sampler
-        self.epoch = -1
-        self.deterministic = deterministic
-        self.args = args
         self.transforms = transforms
-        self.tokenizer = data_tokenizer
-        # self.tokenizer = CLIPTokenizer.from_pretrained(
-        # self.args.pretrained_model_name_or_path, subfolder="tokenizer", revision=None #self.args.pretrained_model_name_or_path
-        # )
-
-    def augment_images(self, image, mask):
-        mask[mask > 128] = 255
-        mask[mask <= 128] = 0
-        mask = Image.fromarray(mask.astype("uint8"))
-        resize = transforms.Resize((self.args.resolution))  # self.args.resolution
-        image = resize(image)
-        mask = resize(mask)
-
-        crop = RandomCrop(self.args.resolution)
-        image, mask = crop(image, mask)
-        # crop = transforms.CenterCrop((512))
-        # image = crop(image)
-        # mask = crop(mask)
-
-        # 50% chance of applying horizontal flip
-        if random.random() > 0.5:
-            image = transforms.functional.hflip(image)
-            mask = transforms.functional.hflip(mask)
-
-        # convert the image and mask to tensors
-        toT = transforms.ToTensor()
-        image = toT(image)
-        mask = toT(mask)
-        mask[mask != 0] = 1
-        # print(type(mask))
-        # mask = transforms.functional.pil_to_tensor(mask)
-        # print(mask)
-
-        # normalize the image with mean and std
-        normalize = transforms.Normalize(mean=[0.5], std=[0.5])
-        image = normalize(image)
-
-        return image.unsqueeze(0), mask.unsqueeze(0)
 
     def tokenize_captions(self, prompt, is_train=True):
         captions = []
@@ -212,30 +178,37 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
             truncation=True,
             return_tensors="pt",
         )
-        return inputs.input_ids
+        return inputs
 
-    def preprocess_train(self, image, mask):
-        images = image["img"]
+    def _sample_data(self, data_info):
+        # load mask
+        mask = Image.open(data_info["mask"])
+
+        # load images
+        img_bytes = self.client.get(data_info["img_path"])
+        img_mem_view = memoryview(img_bytes)
+        img_array = np.frombuffer(img_mem_view, np.uint8)
+        images = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        images = cv2.cvtColor(images, cv2.COLOR_BGR2RGB)
+        images = Image.fromarray(np.uint8(images))
+        w, h = images.size
+        # filter out low-resolution images
+        if w < 512 or h < 512:
+            return None
+
         output = {}
-        O_image = Image.fromarray(np.uint8(images))
-        width, height = O_image.size
-        mask = mask.resize((width, height), Image.ANTIALIAS)
-
-        rate = random.random()
-        mask = np.array(mask)
-        mask = mask.astype(np.float32)
+        mask = mask.resize((w, h), Image.LANCZOS)
+        mask = np.array(mask).astype(np.float32)
         if len(mask.shape) == 3:
             mask = mask[:, :, 0]
 
+        # dilate masks
         S_mask = len(np.nonzero(mask)[0])
         if S_mask == 0:
-            alpha = torch.tensor((1.0, 0.0)).unsqueeze(0)
             aug_mask = mask
+            alpha = torch.tensor((1.0, 0.0)).unsqueeze(0)
         else:
-            rrpp = random.random()
-            if image["lama_flag"]:
-                aug_mask = mask
-            elif image["bbox_flag"]:
+            if data_info["bbox_flag"]:
                 aug_mask = get_min_bounding_box(mask, pp=2)
                 if random.random() > 0.5:
                     aug_mask = random_warponly(
@@ -245,181 +218,107 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
                 aug_mask = mask
             S_aug = len(np.nonzero(aug_mask)[0])
             Srate = S_mask / S_aug
-            Srate = max(Srate, 0)
-            Srate = min(Srate, 1)
-            if image["remove_flag"]:
+            Srate = min(max(Srate, 0), 1)
+            if data_info["remove_flag"]:
                 alpha = torch.tensor((1.0, 0.0)).unsqueeze(0)
             else:
                 alpha = torch.tensor((Srate, 1 - Srate)).unsqueeze(0)
 
-        output["pixel_values"], output["mask"] = self.augment_images(O_image, aug_mask)
-        output["input_idsA"] = self.tokenize_captions(image["promptA"])
-        output["input_idsB"] = self.tokenize_captions(image["promptB"])
-        output["input_idsC"] = self.tokenize_captions(image["promptC"])
-        output["input_ids"] = self.tokenize_captions(image["prompt"])
-        output["tradeoff"] = torch.tensor((1.0, 0.0)).unsqueeze(0)
-
+        output["pixel_values"], output["mask"] = augment_images(images, aug_mask, self.resolution)
+        output["input_idsA"] = self.tokenize_captions(data_info["promptA"])
+        output["input_idsB"] = self.tokenize_captions(data_info["promptB"])
+        output["input_idsC"] = self.tokenize_captions(data_info["promptC"])
+        output["input_ids"] = self.tokenize_captions(data_info["prompt"])
+        output["tradeoff"] = alpha
         return output
 
     def sample_data(self):
-        start_it = time.time()
-        dl_end_it = time.time()
-
-        lama_root = "/mnt/petrelfs/zhuangjunhao/code/inpainting_mask/random_mask/"
-        lama_list = os.listdir(lama_root)
-        self.lama_len = len(lama_list)
-
-        load_end_it = time.time()
-
-        save_log(f"[Anno Download] {dl_end_it - start_it:.3f}s")
-        save_log(f"[Anno Load] {load_end_it - dl_end_it:.3f}s")
-
         buffer = []
-
-        for idx in range(self.total_num):
-            # data_end_it = time.time()
+        for idx, anno_info in enumerate(self.anno_list):
             bbox_flag = 0
-            lama_flag = 0
-            ap = random.random()
-            if ap > 1:
-                remove_flag = 1
-                if random.random() > 0.9:
-                    bbox_flag = 1
-                anno_info = self.annotations[idx]
-                anno_info = anno_info.split(",")
-                rand_idx = random.randint(1, self.total_num - 2)
-                anno_info_rand = self.annotations[rand_idx]
-                anno_info_rand = anno_info_rand.split(",")
-                mask_name = anno_info_rand[2]
+            remove_flag = 0
+            anno_info = anno_info.split(",")
 
-                if random.random() > 0.1:
-                    rand_idx = random.randint(1, self.lama_len - 2)
-                    mask_name = "/" + lama_list[rand_idx]
-                    lama_flag = 1
-                image_name = anno_info[0]
-                promptA = "P_ctxt"
-                promptB = "P_ctxt"
-                if random.random() < 0.1:
-                    promptA = ""
-                    promptB = ""
+            if random.random() < 0.5:
+                # using exact object segmentation mask
+                if anno_info[3] == INVALID_OPEN_FLAG:
+                    anno_info[3] = ""
+                promptA = "P_shape"
+                promptB = "P_shape"
+                prompt = anno_info[3]
+
             else:
-                remove_flag = 0
-                anno_info = self.annotations[idx]
-                anno_info = anno_info.split(",")
-                inp = random.random()
-                if inp < 0.5:  # 0.5
-                    if (
-                        anno_info[3]
-                        == "a 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911"
-                    ):
-                        anno_info[3] = ""
-                    promptA = "P_shape"
-                    promptB = "P_shape"
-                    prompt = anno_info[3]
+                remove_flag = 1
+                bbox_flag = 1
+                # using bounding box as training mask
+                if anno_info[3] == INVALID_OPEN_FLAG:
+                    anno_info[3] = ""
+                promptA = "P_obj"
+                promptB = "P_obj"
+                prompt = anno_info[3]
 
-                else:
-                    remove_flag = 1
-                    bbox_flag = 1
-                    if (
-                        anno_info[3]
-                        == "a 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911"
-                    ):
-                        anno_info[3] = ""
-                    promptA = "P_obj"
-                    promptB = "P_obj"
-                    prompt = anno_info[3]
+            image_name, mask_name = anno_info[0], anno_info[2]
+            image_name = image_name[1:] if image_name.startswith("/") else image_name
+            mask_name = mask_name[1:] if mask_name.startswith("/") else mask_name
+            image_name = os.path.join(self.image_root, image_name)
+            mask_name = os.path.join(self.mask_root, mask_name)
+            # 10% dropout for unconditional training
+            if random.random() < 0.1:
+                promptA = ""
+                promptB = ""
+                prompt = ""
 
-                mask_name = anno_info[2]
-                image_name = anno_info[0]
-
-                if random.random() < 0.1:
-                    promptA = ""
-                    promptB = ""
-                    prompt = ""
-
-            image_info = dict(
-                img_path=image_name,
-                mask=mask_name,
-                promptA=promptA,
-                promptB=promptB,
-                prompt=prompt,
-                promptC="P_abc",
-                remove_flag=remove_flag,
-                bbox_flag=bbox_flag,
-                lama_flag=lama_flag,
-            )
+            data_info = {
+                "img_path": image_name,
+                "mask": mask_name,
+                "promptA": promptA,
+                "promptB": promptB,
+                "prompt": prompt,
+                "promptC": "P_abc",
+                "remove_flag": remove_flag,
+                "bbox_flag": bbox_flag,
+            }
 
             if self.bufsize is None:
                 try:
-                    if image_info["lama_flag"]:
-                        mask_image = Image.open(lama_root + image_info["mask"])
-                        if random.random() > 0.5:
-                            mask_image = mask_image.transpose(Image.FLIP_LEFT_RIGHT)
-                        if random.random() > 0.5:
-                            mask_image = mask_image.transpose(Image.FLIP_TOP_BOTTOM)
-                    else:
-                        mask_image = Image.open(
-                            "/mnt/petrelfs/zhuangjunhao/code/openimagev6/mask" + image_info["mask"]
-                        )
-                    image = self.pipeline(image_info)
-                    s1, s2 = Image.fromarray(np.uint8(image["img"])).size
-                    if s1 < 512 or s2 < 512:
+                    data = self._sample_data(data_info)
+                    if data is None:
                         continue
-
-                    yield self.preprocess_train(image, mask_image)
-
+                    else:
+                        yield data
                 except Exception:
-                    print(f"Error in {image_info}")
+                    print(f"Error in {data_info}")
                     continue
 
             elif len(buffer) < self.bufsize:
-                buffer.append(image_info)
+                pdb.set_trace()
+                buffer.append(data_info)
 
             else:
                 select_idx = random.randint(0, self.bufsize - 1)
-
-                save_log(f"[Data] Idx/SelectIdx: {idx}/{select_idx} " f"Name: {image_info}")
+                save_log(f"[Data] Idx/SelectIdx: {idx}/{select_idx} " f"Name: {data_info}")
 
                 selected_data = buffer[select_idx]
                 pipe_start_it = time.time()
-
                 try:
-                    mask_image = Image.open("/mnt/petrelfs/zhuangjunhao/code/openimagev6/mask" + selected_data["mask"])
-                    image = self.pipeline(selected_data)
-                    yield self.preprocess_train(image, mask_image)
-
+                    data = self._sample_data(data_info)
+                    yield data
                 except Exception:
                     print(f"Error in {selected_data}")
                     continue
 
                 pipe_end_it = time.time()
                 save_log(f"[Pipe] {pipe_end_it - pipe_start_it:.3f}s")
-                buffer[select_idx] = image_info
+                buffer[select_idx] = data_info
 
-        for image_info in buffer:
+        for data_info in buffer:
             try:
-                mask_image = Image.open("/mnt/petrelfs/zhuangjunhao/code/openimagev6/mask" + image_info["mask"])
-                image = self.pipeline(image_info)
-                yield self.preprocess_train(image, mask_image)
+                yield self._sample_data(data_info)
             except Exception:
-                print(f"Error in {image_info}")
+                print(f"Error in {data_info}")
                 continue
 
     def __iter__(self):
-        self.annotations = []
-        for i in range(16):
-            with open(
-                "/mnt/petrelfs/zhuangjunhao/code/Smartbrush/seg_anno/prompt_anno_" + str(i) + ".txt",
-                "r",
-                encoding="utf-8",
-            ) as f:  # 打开文本
-                data = f.read()  # 读取文本
-            f.close()
-            annotation = data.split("\n")
-            self.annotations += annotation[:-1]
-
-        self.total_num = len(self.annotations)
-        random.shuffle(self.annotations)
         for data in self.sample_data():
             yield data
 
