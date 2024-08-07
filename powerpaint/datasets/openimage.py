@@ -280,15 +280,15 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
             }
 
             if self.bufsize is None:
-                try:
-                    data = self._sample_data(data_info)
-                    if data is None:
-                        continue
-                    else:
-                        yield data
-                except Exception:
-                    print(f"Error in {data_info}")
+                # try:
+                data = self._sample_data(data_info)
+                if data is None:
                     continue
+                else:
+                    yield data
+                # except Exception:
+                #     print(f"Error in {data_info}")
+                #     continue
 
             elif len(buffer) < self.bufsize:
                 pdb.set_trace()
@@ -300,23 +300,23 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
 
                 selected_data = buffer[select_idx]
                 pipe_start_it = time.time()
-                try:
-                    data = self._sample_data(data_info)
-                    yield data
-                except Exception:
-                    print(f"Error in {selected_data}")
-                    continue
+                # try:
+                data = self._sample_data(selected_data)
+                yield data
+                # except Exception:
+                #     print(f"Error in {selected_data}")
+                #     continue
 
                 pipe_end_it = time.time()
                 save_log(f"[Pipe] {pipe_end_it - pipe_start_it:.3f}s")
                 buffer[select_idx] = data_info
 
         for data_info in buffer:
-            try:
-                yield self._sample_data(data_info)
-            except Exception:
-                print(f"Error in {data_info}")
-                continue
+            # try:
+            yield self._sample_data(data_info)
+            # except Exception:
+            #     print(f"Error in {data_info}")
+            #     continue
 
     def __iter__(self):
         for data in self.sample_data():

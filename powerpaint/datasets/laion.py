@@ -131,7 +131,7 @@ class LaionIterJsonDataset(IterableDataset):
         output["input_ids"] = self.tokenize_captions(data_info["prompt"]).input_ids
         output["input_idsC"] = self.tokenize_captions(data_info["promptC"]).input_ids
 
-        if data_info[["outpaint_flag"]]:
+        if data_info["outpaint_flag"]:
             temp_mask = torch.zeros((1, 1, self.resolution, self.resolution))
             mask_rp = random.random()
             mask_lp = random.random()
@@ -166,7 +166,7 @@ class LaionIterJsonDataset(IterableDataset):
                 mask_image = mask_image.transpose(Image.FLIP_LEFT_RIGHT)
             if random.random() > 0.5:
                 mask_image = mask_image.transpose(Image.FLIP_TOP_BOTTOM)
-            mask = mask_image.resize((self.resolution, self.resolution), Image.ANTIALIAS)
+            mask = mask_image.resize((self.resolution, self.resolution), Image.LANCZOS)
             mask = np.array(mask)
             mask = mask.astype(np.float32)
             if len(mask.shape) == 3:
@@ -294,11 +294,11 @@ class LaionIterJsonDataset(IterableDataset):
             }
 
             if self.bufsize is None:
-                try:
-                    yield self._sample_data(data_info)
-                except Exception:
-                    print(f"Error in {data_info}")
-                    continue
+                # try:
+                yield self._sample_data(data_info)
+                # except Exception:
+                #     print(f"Error in {data_info}")
+                #     continue
 
             elif len(buffer) < self.bufsize:
                 buffer.append(data_info)
@@ -312,21 +312,21 @@ class LaionIterJsonDataset(IterableDataset):
                 buffer[select_idx] = data_info
                 pipe_start_it = time.time()
 
-                try:
-                    data = self._sample_data(selected_data)
-                    yield data
-                except Exception:
-                    print(f"Error in {selected_data}")
-                    continue
+                # try:
+                data = self._sample_data(selected_data)
+                yield data
+                # except Exception:
+                #     print(f"Error in {selected_data}")
+                #     continue
                 pipe_end_it = time.time()
                 save_log(f"[Pipe] {pipe_end_it - pipe_start_it:.3f}s")
 
         for data_info in buffer:
-            try:
-                yield self._sample_data(data_info)
-            except Exception:
-                print(f"Error in {data_info}")
-                continue
+            # try:
+            yield self._sample_data(data_info)
+            # except Exception:
+            #     print(f"Error in {data_info}")
+            #     continue
 
     def __iter__(self):
         for anno_info in self.sample_anno():
