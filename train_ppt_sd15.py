@@ -20,7 +20,6 @@ import time
 from pathlib import Path
 
 import accelerate
-import datasets
 import numpy as np
 import torch
 import torch.nn as nn
@@ -32,41 +31,33 @@ from accelerate.logging import get_logger
 from accelerate.state import AcceleratorState
 from accelerate.utils import ProjectConfiguration, set_seed
 from huggingface_hub import create_repo, upload_folder
-from mmagic.registry import DATASETS
-from mmagic.utils import register_all_modules
+from omegaconf import OmegaConf
 from packaging import version
 from PIL import Image
-from torch.nn.functional import normalize
 from torch.nn.parameter import Parameter
 from torchvision import transforms
 from tqdm.auto import tqdm
-from transformers import CLIPTextModel, CLIPTokenizer
+from transformers import AutoTokenizer, CLIPTextModel, CLIPTokenizer
 from transformers.utils import ContextManagers
 
 import diffusers
+import powerpaint.datasets
 from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline, UNet2DConditionModel
 from diffusers.optimization import get_scheduler
-from diffusers.training_utils import EMAModel
-from diffusers.utils import check_min_version, deprecate, is_wandb_available
+from diffusers.utils import check_min_version, is_wandb_available
 from diffusers.utils.import_utils import is_xformers_available
-from powerpaint.dataset import LaionIterJsonDataset, OpenImageBLIPaug_Dataset
-from powerpaint.utils import TokenizerWrapper, add_tokens_plus
+from powerpaint.datasets import ProbPickingDataset
 
 
-os.environ["NCCL_TIMEOUT"] = "3600000"  # 设置超时时间为60秒（60000毫秒）
+os.environ["NCCL_TIMEOUT"] = "3600000"
 
 if is_wandb_available():
     import wandb
-
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.18.0.dev0")
 
 logger = get_logger(__name__, log_level="INFO")
-
-DATASET_NAME_MAPPING = {
-    "lambdalabs/pokemon-blip-captions": ("image", "text"),
-}
 
 
 def make_image_grid(imgs, rows, cols):
@@ -88,8 +79,6 @@ def save_model_card(
 ):
     img_str = ""
     if len(images) > 0:
-        image_grid = make_image_grid(images, 1, len(args.validation_prompts))
-        image_grid.save(os.path.join(repo_folder, "val_imgs_grid.png"))
         img_str += "![val_imgs_grid](./val_imgs_grid.png)\n"
 
     yaml = f"""
@@ -208,10 +197,14 @@ def log_validation(vae, text_encoder, tokenizer, unet, args, accelerator, weight
     return images
 
 
-def parse_args():
+def parse_args(input_args=None):
     parser = argparse.ArgumentParser(description="Simple example of a training script.")
+
     parser.add_argument(
-        "--input_perturbation", type=float, default=0, help="The scale of input perturbation. Recommended 0.1."
+        "--config",
+        type=str,
+        default=None,
+        help="yaml for configuration",
     )
     parser.add_argument(
         "--pretrained_model_name_or_path",
@@ -226,6 +219,9 @@ def parse_args():
         default=None,
         required=False,
         help="Revision of pretrained model identifier from huggingface.co/models.",
+    )
+    parser.add_argument(
+        "--input_perturbation", type=float, default=0, help="The scale of input perturbation. Recommended 0.1."
     )
     parser.add_argument(
         "--dataset_name",
@@ -377,17 +373,6 @@ def parse_args():
             " https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices"
         ),
     )
-    parser.add_argument("--use_ema", action="store_true", help="Whether to use EMA model.")
-    parser.add_argument(
-        "--non_ema_revision",
-        type=str,
-        default=None,
-        required=False,
-        help=(
-            "Revision of pretrained non-ema model identifier. Must be a branch, tag or git identifier of the local or"
-            " remote repository specified with --pretrained_model_name_or_path."
-        ),
-    )
     parser.add_argument(
         "--dataloader_num_workers",
         type=int,
@@ -489,76 +474,55 @@ def parse_args():
         ),
     )
 
-    args = parser.parse_args()
-    env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
-    if env_local_rank != -1 and env_local_rank != args.local_rank:
-        args.local_rank = env_local_rank
+    if input_args is not None:
+        args = parser.parse_args(input_args)
+    else:
+        args = parser.parse_args()
 
-    # Sanity checks
-    # if args.dataset_name is None and args.train_data_dir is None:
-    #     raise ValueError("Need either a dataset name or a training folder.")
+    # use omegaconf to manage configurations
+    if args.config is not None:
+        config = OmegaConf.load(args.config)
+        for k, v in config.items():
+            args.__dict__[k] = v
 
-    # default to using the same revision for the non-ema model if not specified
-    if args.non_ema_revision is None:
-        args.non_ema_revision = args.revision
+    if args.proportion_empty_prompts < 0 or args.proportion_empty_prompts > 1:
+        raise ValueError("`--proportion_empty_prompts` must be in the range [0, 1].")
+
+    if args.validation_prompt is not None and args.validation_image is None:
+        raise ValueError("`--validation_image` must be set if `--validation_prompt` is set")
+
+    if args.validation_prompt is None and args.validation_image is not None:
+        raise ValueError("`--validation_prompt` must be set if `--validation_image` is set")
+
+    if (
+        args.validation_image is not None
+        and args.validation_prompt is not None
+        and len(args.validation_image) != 1
+        and len(args.validation_prompt) != 1
+        and len(args.validation_image) != len(args.validation_prompt)
+    ):
+        raise ValueError(
+            "Must provide either 1 `--validation_image`, 1 `--validation_prompt`,"
+            " or the same number of `--validation_prompt`s and `--validation_image`s"
+        )
+
+    if args.resolution % 8 != 0:
+        raise ValueError(
+            "`--resolution` must be divisible by 8 for consistently sized encoded images between the VAE and the brushnet encoder."
+        )
 
     return args
 
 
-def spherical_interpolation(v1, v2, t):
-    """
-    球面插值函数
-    :param v1: 第一个向量
-    :param v2: 第二个向量
-    :param t: 插值参数，范围为 [0, 1]
-    :return: 插值结果向量
-    """
-    # 对两个向量进行归一化
-    v1_normalized = normalize(v1, p=2, dim=-1)
-    v2_normalized = normalize(v2, p=2, dim=-1)
-
-    # 计算两个向量之间的夹角
-    dot_product = torch.sum(v1_normalized * v2_normalized, dim=-1)
-    theta = torch.acos(dot_product)
-    theta[theta < 0.000001] = 0.000001
-    theta = theta.unsqueeze(-1)
-    v_interp_normalized = (
-        torch.sin(t * theta) / torch.sin(theta) * v1_normalized
-        + torch.sin((1 - t) * theta) / torch.sin(theta) * v2_normalized
-    )
-
-    # 返回插值结果
-    return normalize(v_interp_normalized, p=2, dim=-1)
-
-
-def main():
-    # print(1)
-    args = parse_args()
-
-    if args.non_ema_revision is not None:
-        deprecate(
-            "non_ema_revision!=None",
-            "0.15.0",
-            message=(
-                "Downloading 'non_ema' weights from revision branches of the Hub is deprecated. Please make sure to"
-                " use `--variant=non_ema` instead."
-            ),
-        )
+def main(args):
     logging_dir = os.path.join(args.output_dir, args.logging_dir)
-
     accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=logging_dir)
-    from accelerate import DistributedDataParallelKwargs
-
-    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
     accelerator = Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         mixed_precision=args.mixed_precision,
         log_with=args.report_to,
         project_config=accelerator_project_config,
-        kwargs_handlers=[ddp_kwargs],
     )
-    # import pdb
-    # pdb.set_trace()
 
     # Make one log on every process with the configuration for debugging.
     logging.basicConfig(
@@ -568,16 +532,15 @@ def main():
     )
     logger.info(accelerator.state, main_process_only=False)
     if accelerator.is_local_main_process:
-        datasets.utils.logging.set_verbosity_warning()
         transformers.utils.logging.set_verbosity_warning()
         diffusers.utils.logging.set_verbosity_info()
     else:
-        datasets.utils.logging.set_verbosity_error()
         transformers.utils.logging.set_verbosity_error()
         diffusers.utils.logging.set_verbosity_error()
 
     # If passed along, set the training seed now.
     if args.seed is not None:
+        torch.manual_seed(args.seed)
         set_seed(args.seed)
 
     # Handle the repository creation
@@ -589,6 +552,17 @@ def main():
             repo_id = create_repo(
                 repo_id=args.hub_model_id or Path(args.output_dir).name, exist_ok=True, token=args.hub_token
             ).repo_id
+
+    # Load tokenizer
+    if args.tokenizer_name:
+        tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, revision=args.revision, use_fast=False)
+    elif args.pretrained_model_name_or_path:
+        tokenizer = AutoTokenizer.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="tokenizer",
+            revision=args.revision,
+            use_fast=False,
+        )
 
     # Load scheduler, tokenizer and models.
     noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
@@ -623,115 +597,75 @@ def main():
             args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision
         )
 
-    register_all_modules()
+    # add learnable tokens for task prompts into tokenizer
+    # adding dummy tokens for multi-vector
+    for name, task in args.task_prompt.items():
+        num_added_vectors, num_tries = 0, 0
+        added_placeholder_tokens = []
+        placeholder_tokens = task["placeholder_tokens"]
+        while True:
+            assert num_tries < 100, "Too many tries to add tokens. please use other placeholder token"
+            single_added_vector = tokenizer.add_tokens([placeholder_tokens])
+            # Successfully added new token
+            if single_added_vector == 1:
+                num_added_vectors += 1
+                added_placeholder_tokens.append(placeholder_tokens)
+            if num_added_vectors == task["num_vectors_per_token"]:
+                break
+            placeholder_tokens += f"_{num_added_vectors}"
+        # save the added placeholder_tokens
+        task["added_placeholder_tokens"] = added_placeholder_tokens
 
-    # backend_args_laion = {"backend": "petrel", "path_mapping": {"/": "laion5b:s3://laion5b/"}}
-    pipeline_laion = [
-        {
-            "type": "LoadImageFromFile",
-            "key": "img",
-            "channel_order": "rgb",
-            "backend_args": "backend_args_laion",
-        },
-    ]
+        # convert the initializer_token and placeholder_token to ids
+        token_ids = tokenizer.encode(task["initializer_token"], add_special_tokens=False)
+        if len(token_ids) > 1:
+            raise ValueError("The initializer token should be a single token.")
+
+        initializer_token_id = token_ids[0]
+        placeholder_token_ids = tokenizer.convert_tokens_to_ids(added_placeholder_tokens)
+
+        # Resize the token embeddings as we are adding new special tokens to the tokenizer
+        text_encoder.resize_token_embeddings(len(tokenizer))
+
+        # Initialise the newly added placeholder token with the embeddings of the initializer token
+        token_embeds = text_encoder.get_input_embeddings().weight.data
+        with torch.no_grad():
+            for token_id in placeholder_token_ids:
+                token_embeds[token_id] = token_embeds[initializer_token_id].clone()
+
+    # transforms used for preprocessing dataset
     train_transforms = transforms.Compose(
         [
             transforms.Resize(args.resolution, interpolation=transforms.InterpolationMode.BILINEAR),
-            transforms.CenterCrop(args.resolution) if args.center_crop else transforms.RandomCrop(args.resolution),
-            transforms.RandomHorizontalFlip() if args.random_flip else transforms.Lambda(lambda x: x),
+            transforms.CenterCrop(args.resolution),
+            transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             transforms.Normalize([0.5], [0.5]),
         ]
     )
 
-    # backend_args_open = dict(
-    #     backend="petrel",
-    #     path_mapping={"/": "openmmlab:s3://openmmlab/datasets/detection/OpenImages/OpenImages/train/"},
-    # )
-    pipeline_open = [
-        {
-            "type": "LoadImageFromFile",
-            "key": "img",
-            "channel_order": "rgb",
-            "backend_args": "backend_args_open",
-        }
-    ]
+    # preparing datasets and dataloader for training.
+    # support loading multiple datasets in a single dataloader.
+    datasets_list = []
+    for d in args.train_data.datasets:
+        dataset_class = getattr(powerpaint.datasets, d.dataset_class)
+        dataset_ = dataset_class(train_transforms, tokenizer, args.task_prompt, **d)
+        datasets_list.append({"dataset": dataset_, "prob": d.prob})
 
-    # backend_args_coco = {
-    #     "backend": "petrel",
-    #     "path_mapping": {"/": "detection:s3://openmmlab/datasets/detection/coco/train2017/"},
-    # }
-    # pipeline_coco = [
-    #     {
-    #         "type": "LoadImageFromFile",
-    #         "key": "img",
-    #         "channel_order": "rgb",
-    #         "backend_args": "backend_args_coco",
-    #     }
-    # ]
-
-    data_tokenizer = TokenizerWrapper(
-        from_pretrained=args.pretrained_model_name_or_path, subfolder="tokenizer", revision=None
-    )
-    add_tokens_plus(
-        tokenizer=data_tokenizer,
-        text_encoder=text_encoder,
-        placeholder_tokens=["MMRemoveZJH", "MMInsertZJH", "MMInsert_allZJH"],
-        initialize_tokens=["a", "a", "a"],
-        num_vectors_per_token=10,
-    )
-    # add_tokens(tokenizer = dataset_open.tokenizer,text_encoder = text_encoder,placeholder_token = "MMagicInpaintZJH",initialize_token = "background",num_vectors_per_token = 10)
-    # add_tokens_plus(tokenizer = dataset_open.tokenizer,text_encoder = text_encoder,placeholder_tokens = ["MMRemoveZJH","MMInsertZJH"],initialize_tokens = ["a","a"],num_vectors_per_token = 10)
-    dataset_open = OpenImageBLIPaug_Dataset(
-        pipeline_open,
-        aesthetic_score_threshold=0.1,  # NOTE: just for debug
-        bufsize=None,
-        args=args,
-        data_tokenizer=data_tokenizer,
-    )
-    # dataset_coco = CocoBLIPaug_Dataset(
-    #     pipeline_coco,
-    #     aesthetic_score_threshold=0.1,  # NOTE: just for debug
-    #     bufsize=None,
-    #     args=args,
-    #     data_tokenizer=data_tokenizer,
-    # )
-    dataset_laion = LaionIterJsonDataset(
-        "laion5b:s3://llm-process/laion-5b/format/v020/laion2B-en/",
-        pipeline_laion,
-        aesthetic_score_threshold=5,
-        # clip_score_threshold = 0.32,  # NOTE: just for debug
-        bufsize=100,
-        transforms=train_transforms,
-        args=args,
-        data_tokenizer=data_tokenizer,
-    )
-    dataset = {
-        "type": "ProbPickingDataset",
-        "datasets": [
-            {"dataset": dataset_open, "prob": 0.4},  # 0.64
-            # {"dataset": dataset_coco, "prob": 0.1},  # 0.16
-            {"dataset": dataset_laion, "prob": 0.6},  # 0.2
-        ],
-    }
-
-    dataset = DATASETS.build(dataset)
+    train_dataset = ProbPickingDataset(datasets_list)
 
     with accelerator.main_process_first():
         if args.max_train_samples is not None:
-            dataset = dataset.shuffle(seed=args.seed).select(range(args.max_train_samples))
-        # Set the training transforms
-        train_dataset = dataset
-    # dataset = dataset_laion
+            train_dataset = train_dataset.shuffle(seed=args.seed).select(range(args.max_train_samples))
+
     train_dataloader = torch.utils.data.DataLoader(
-        dataset,
+        train_dataset,
         batch_size=args.train_batch_size,
         num_workers=args.dataloader_num_workers,
     )
 
-    unet = UNet2DConditionModel.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="unet", revision=args.non_ema_revision
-    )
+    # extend unet to with five more channels in conv_in
+    unet = UNet2DConditionModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="unet")
 
     old_weights = unet.conv_in.weight
     old_bias = unet.conv_in.bias
@@ -753,51 +687,6 @@ def main():
     # Freeze vae and text_encoder
     vae.requires_grad_(False)
     text_encoder.requires_grad_(False)
-
-    # Create EMA for the unet.
-    if args.use_ema:
-        ema_unet = UNet2DConditionModel.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
-        )
-
-        old_weights_ema = ema_unet.conv_in.weight
-        old_bias_ema = ema_unet.conv_in.bias
-        new_conv1_ema = nn.Conv2d(
-            9,
-            old_weights_ema.shape[0],
-            kernel_size=ema_unet.conv_in.kernel_size,
-            stride=ema_unet.conv_in.stride,
-            padding=ema_unet.conv_in.padding,
-            bias=True if old_bias_ema is not None else False,
-        )
-        param_ema = torch.zeros((320, 5, 3, 3), requires_grad=True)
-        new_conv1_ema.weight = Parameter(torch.cat((old_weights_ema, param_ema), dim=1))
-        if old_bias_ema is not None:
-            new_conv1_ema.bias = old_bias_ema
-        ema_unet.conv_in = new_conv1_ema
-        ema_unet.config["in_channels"] = 9
-
-        ema_unet = EMAModel(ema_unet.parameters(), model_cls=UNet2DConditionModel, model_config=ema_unet.config)
-
-        # ------------------------
-        ema_tokenizer = TokenizerWrapper(
-            from_pretrained=args.pretrained_model_name_or_path, subfolder="tokenizer", revision=None
-        )
-        ema_text_encoder = CLIPTextModel.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision
-        )
-        add_tokens_plus(
-            tokenizer=ema_tokenizer,
-            text_encoder=ema_text_encoder,
-            placeholder_tokens=["MMRemoveZJH", "MMInsertZJH", "MMInsert_allZJH"],
-            initialize_tokens=["a", "a", "a"],
-            num_vectors_per_token=10,
-        )
-        # add_tokens_plus(tokenizer = ema_tokenizer,text_encoder = ema_text_encoder,placeholder_tokens = ["MMRemoveZJH","MMInsertZJH"],initialize_tokens = ["a","a"],num_vectors_per_token = 10)
-        # add_tokens(tokenizer = ema_tokenizer,text_encoder = ema_text_encoder,placeholder_token = "MMagicInpaintZJH",initialize_token = "background",num_vectors_per_token = 10)
-        ema_text_encoder = EMAModel(
-            ema_text_encoder.parameters(), model_cls=CLIPTextModel, model_config=ema_text_encoder.config
-        )
 
     if args.enable_xformers_memory_efficient_attention:
         if is_xformers_available():
@@ -840,9 +729,6 @@ def main():
     if version.parse(accelerate.__version__) >= version.parse("0.16.0"):
         # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
         def save_model_hook(models, weights, output_dir):
-            if args.use_ema:
-                ema_unet.save_pretrained(os.path.join(output_dir, "unet_ema"))
-                # ema_text_encoder.save_pretrained(os.path.join(output_dir, "TextEncoder_ema"))
             for i, model in enumerate(models):
                 model.save_pretrained(os.path.join(output_dir, "unet"))
 
@@ -850,17 +736,6 @@ def main():
                 weights.pop()
 
         def load_model_hook(models, input_dir):
-            if args.use_ema:
-                load_model = EMAModel.from_pretrained(os.path.join(input_dir, "unet_ema"), UNet2DConditionModel)
-                ema_unet.load_state_dict(load_model.state_dict())
-                ema_unet.to(accelerator.device)
-                del load_model
-
-                load_model = EMAModel.from_pretrained(os.path.join(input_dir, "TextEncoder_ema"), CLIPTextModel)
-                ema_text_encoder.load_state_dict(load_model.state_dict())
-                ema_text_encoder.to(accelerator.device)
-                del load_model
-
             for i in range(len(models)):
                 # pop models so that they are not loaded again
                 model = models.pop()
@@ -907,7 +782,6 @@ def main():
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
 
-    # print(10)
     text_encoder.text_model.embeddings.token_embedding.trainable_embeddings.requires_grad_(True)
     optimizer = optimizer_cls(
         list(unet.parameters())
@@ -928,10 +802,6 @@ def main():
     unet, optimizer, train_dataloader, lr_scheduler, text_encoder = accelerator.prepare(
         unet, optimizer, train_dataloader, lr_scheduler, text_encoder
     )
-
-    if args.use_ema:
-        ema_unet.to(accelerator.device)
-        ema_text_encoder.to(accelerator.device)
 
     print("accelerator.device: ", accelerator.device)
 
@@ -965,8 +835,6 @@ def main():
         tracker_config.pop("validation_prompts")
         accelerator.init_trackers(args.tracker_project_name, tracker_config)
 
-    # print(12)
-
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
@@ -979,8 +847,6 @@ def main():
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
     global_step = 0
     first_epoch = 0
-
-    # print(13)
 
     # Potentially load in the weights and states from a previous save
     if args.resume_from_checkpoint:
@@ -1142,9 +1008,6 @@ def main():
 
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
-                if args.use_ema:
-                    ema_unet.step(unet.parameters())
-                    ema_text_encoder.step(text_encoder.parameters())
                 progress_bar.update(1)
                 global_step += 1
                 accelerator.log({"train_loss": train_loss}, step=global_step)
@@ -1192,14 +1055,6 @@ def main():
 
         if accelerator.is_main_process:
             if args.validation_prompts is not None and epoch % args.validation_epochs == 0:
-                if args.use_ema:
-                    # Store the UNet parameters temporarily and load the EMA parameters to perform inference.
-                    ema_unet.store(unet.parameters())
-                    ema_unet.copy_to(unet.parameters())
-
-                    ema_text_encoder.store(text_encoder.parameters())
-                    ema_text_encoder.copy_to(text_encoder.parameters())
-
                 log_validation(
                     vae,
                     text_encoder,
@@ -1210,18 +1065,11 @@ def main():
                     weight_dtype,
                     global_step,
                 )
-                if args.use_ema:
-                    # Switch back to the original UNet parameters.
-                    ema_unet.restore(unet.parameters())
-                    ema_text_encoder.restore(text_encoder.parameters())
 
     # Create the pipeline using the trained modules and save it.
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
         unet = accelerator.unwrap_model(unet)
-        if args.use_ema:
-            ema_unet.copy_to(unet.parameters())
-            ema_text_encoder.copy_to(text_encoder.parameters())
 
         pipeline = StableDiffusionPipeline.from_pretrained(
             args.pretrained_model_name_or_path,
@@ -1266,4 +1114,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    main(args)

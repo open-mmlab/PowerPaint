@@ -1,5 +1,4 @@
 import os
-import pdb
 import random
 import time
 
@@ -20,14 +19,25 @@ except ImportError:
     print("Failed to import petrel_client. Please install it if you are using petrel-oss.")
 
 
+class RandomCrop(object):
+    def __init__(self, size):
+        self.size = size
+
+    def __call__(self, image, target):
+        crop_params = transforms.RandomCrop.get_params(image, output_size=(self.size, self.size))
+        image = transforms.functional.crop(image, *crop_params)
+        if target is not None:
+            target = transforms.functional.crop(target, *crop_params)
+        return image, target
+
+
 def augment_images(image, mask, resolution):
     mask[mask > 128] = 255
     mask[mask <= 128] = 0
-    mask = Image.fromarray(mask.astype("uint8"))
-    resize = transforms.Resize((resolution))
-    image = resize(image)
-    mask = resize(mask)
+    mask = Image.fromarray(mask.astype("uint8")).convert("L")
 
+    resize = transforms.Resize((resolution))
+    image, mask = resize(image), resize(mask)
     crop = RandomCrop(resolution)
     image, mask = crop(image, mask)
 
@@ -46,7 +56,7 @@ def augment_images(image, mask, resolution):
     normalize = transforms.Normalize(mean=[0.5], std=[0.5])
     image = normalize(image)
 
-    return image.unsqueeze(0), mask.unsqueeze(0)
+    return image, mask
 
 
 def random_warponly(img, sigma=15, patch=40):
@@ -93,18 +103,6 @@ def get_min_bounding_box(mask, pp=5):
     return bounding_box
 
 
-class RandomCrop(object):
-    def __init__(self, size):
-        self.size = size
-
-    def __call__(self, image, target):
-        crop_params = transforms.RandomCrop.get_params(image, output_size=(self.size, self.size))
-        image = transforms.functional.crop(image, *crop_params)
-        if target is not None:
-            target = transforms.functional.crop(target, *crop_params)
-        return image, target
-
-
 class OpenImageBLIPaug_Dataset(IterableDataset):
     """Load data from OpenImages.
     PowerPaint mainly uses openimages with its mask as training data for:
@@ -117,6 +115,8 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
         self,
         transforms,
         data_tokenizer,
+        task_prompt,
+        name=None,
         anno_root=None,
         image_root=None,
         mask_root=None,
@@ -131,6 +131,7 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
         super().__init__()
         assert anno_root is not None, "Please provide the path to the annotation files."
 
+        self.name = name
         # for data loading
         self.client = Client(enable_multi_cluster=True, enable_mc=True)
 
@@ -154,35 +155,16 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
         self.epoch = -1
         self.deterministic = deterministic
         self.tokenizer = data_tokenizer
+        self.task_prompt = task_prompt
 
         # for data filter
         self.aesthetic_score_threshold = aesthetic_score_threshold
         self.clip_score_threshold = clip_score_threshold
         self.transforms = transforms
 
-    def tokenize_captions(self, prompt, is_train=True):
-        captions = []
-        caption = prompt
-        if isinstance(caption, str):
-            captions.append(caption)
-        elif isinstance(caption, (list, np.ndarray)):
-            # take a random caption if there are multiple
-            captions.append(random.choice(caption) if is_train else caption[0])
-        else:
-            raise ValueError(f"Caption column `{'prompt'}` should contain either strings or lists of strings.")
-
-        inputs = self.tokenizer(
-            captions,
-            max_length=self.tokenizer.model_max_length,
-            padding="max_length",
-            truncation=True,
-            return_tensors="pt",
-        )
-        return inputs
-
     def _sample_data(self, data_info):
         # load mask
-        mask = Image.open(data_info["mask"])
+        mask = Image.open(data_info["mask"]).convert("L")
 
         # load images
         img_bytes = self.client.get(data_info["img_path"])
@@ -206,56 +188,57 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
         S_mask = len(np.nonzero(mask)[0])
         if S_mask == 0:
             aug_mask = mask
-            alpha = torch.tensor((1.0, 0.0)).unsqueeze(0)
+            alpha = torch.tensor((1.0, 0.0))
         else:
-            if data_info["bbox_flag"]:
+            # using bounding box (with micro-aug) for object inpainting
+            if data_info["promptA"] == data_info["promptB"]:
                 aug_mask = get_min_bounding_box(mask, pp=2)
                 if random.random() > 0.5:
                     aug_mask = random_warponly(
                         aug_mask, sigma=20 / 200 * (S_mask ** (0.5)), patch=max(60 / 200 * (S_mask ** (0.5)), 4)
                     )
+                alpha = torch.tensor((1.0, 0.0))
+
+            # using exact object segmentation mask for shape-guided inpainting
             else:
                 aug_mask = mask
-            S_aug = len(np.nonzero(aug_mask)[0])
-            Srate = S_mask / S_aug
-            Srate = min(max(Srate, 0), 1)
-            if data_info["remove_flag"]:
-                alpha = torch.tensor((1.0, 0.0)).unsqueeze(0)
-            else:
-                alpha = torch.tensor((Srate, 1 - Srate)).unsqueeze(0)
+                S_aug = len(np.nonzero(aug_mask)[0])
+                Srate = S_mask / S_aug
+                Srate = min(max(Srate, 0), 1)
+                alpha = torch.tensor((Srate, 1 - Srate))
 
         output["pixel_values"], output["mask"] = augment_images(images, aug_mask, self.resolution)
-        output["input_idsA"] = self.tokenize_captions(data_info["promptA"])
-        output["input_idsB"] = self.tokenize_captions(data_info["promptB"])
-        output["input_idsC"] = self.tokenize_captions(data_info["promptC"])
-        output["input_ids"] = self.tokenize_captions(data_info["prompt"])
         output["tradeoff"] = alpha
+
+        # tokenization
+        output["input_idsA"], output["input_idsB"], output["input_idsC"], output["input_ids"] = self.tokenizer(
+            [data_info["promptA"], data_info["promptB"], data_info["promptC"], data_info["prompt"]],
+            max_length=self.tokenizer.model_max_length,
+            padding="max_length",
+            truncation=True,
+            return_tensors="pt",
+        ).input_ids
+
         return output
 
     def sample_data(self):
         buffer = []
         for idx, anno_info in enumerate(self.anno_list):
-            bbox_flag = 0
-            remove_flag = 0
             anno_info = anno_info.split(",")
 
+            prompt = anno_info[3]
             if random.random() < 0.5:
-                # using exact object segmentation mask
+                # using bounding box as training mask for object inpainting
                 if anno_info[3] == INVALID_OPEN_FLAG:
                     anno_info[3] = ""
-                promptA = "P_shape"
-                promptB = "P_shape"
-                prompt = anno_info[3]
-
+                promptA = self.task_prompt["object_inpainting"]["placeholder_tokens"]
+                promptB = self.task_prompt["object_inpainting"]["placeholder_tokens"]
             else:
-                remove_flag = 1
-                bbox_flag = 1
-                # using bounding box as training mask
+                # using exact object segmentation mask for shape-guided inpainting
                 if anno_info[3] == INVALID_OPEN_FLAG:
                     anno_info[3] = ""
-                promptA = "P_obj"
-                promptB = "P_obj"
-                prompt = anno_info[3]
+                promptA = self.task_prompt["shape_inpainting"]["placeholder_tokens"]
+                promptB = self.task_prompt["context_inpainting"]["placeholder_tokens"]
 
             image_name, mask_name = anno_info[0], anno_info[2]
             image_name = image_name[1:] if image_name.startswith("/") else image_name
@@ -275,23 +258,20 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
                 "promptB": promptB,
                 "prompt": prompt,
                 "promptC": "P_abc",
-                "remove_flag": remove_flag,
-                "bbox_flag": bbox_flag,
             }
 
             if self.bufsize is None:
-                # try:
-                data = self._sample_data(data_info)
-                if data is None:
+                try:
+                    data = self._sample_data(data_info)
+                    if data is None:
+                        continue
+                    else:
+                        yield data
+                except Exception:
+                    print(f"Error in {data_info}")
                     continue
-                else:
-                    yield data
-                # except Exception:
-                #     print(f"Error in {data_info}")
-                #     continue
 
             elif len(buffer) < self.bufsize:
-                pdb.set_trace()
                 buffer.append(data_info)
 
             else:
@@ -300,23 +280,23 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
 
                 selected_data = buffer[select_idx]
                 pipe_start_it = time.time()
-                # try:
-                data = self._sample_data(selected_data)
-                yield data
-                # except Exception:
-                #     print(f"Error in {selected_data}")
-                #     continue
+                try:
+                    data = self._sample_data(selected_data)
+                    yield data
+                except Exception:
+                    print(f"Error in {selected_data}")
+                    continue
 
                 pipe_end_it = time.time()
                 save_log(f"[Pipe] {pipe_end_it - pipe_start_it:.3f}s")
                 buffer[select_idx] = data_info
 
         for data_info in buffer:
-            # try:
-            yield self._sample_data(data_info)
-            # except Exception:
-            #     print(f"Error in {data_info}")
-            #     continue
+            try:
+                yield self._sample_data(data_info)
+            except Exception:
+                print(f"Error in {data_info}")
+                continue
 
     def __iter__(self):
         for data in self.sample_data():
@@ -324,3 +304,6 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
 
     def __len__(self):
         return 999_999_999
+
+    def __repr__(self):
+        return f"OpenImageBLIPaug_Dataset(name={self.name}, resolution={self.resolution})"

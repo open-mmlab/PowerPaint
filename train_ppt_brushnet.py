@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # modified from https://github.com/TencentARC/BrushNet/blob/main/examples/brushnet/train_brushnet.py
+# In the version
 
 import argparse
 import contextlib
@@ -16,7 +17,7 @@ import torch
 import torch.nn.functional as F
 import torch.utils.checkpoint
 import transformers
-from accelerate import Accelerator, DistributedDataParallelKwargs
+from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import ProjectConfiguration, set_seed
 from huggingface_hub import create_repo, upload_folder
@@ -32,7 +33,6 @@ import powerpaint.datasets
 from diffusers import (
     AutoencoderKL,
     DDPMScheduler,
-    UNet2DConditionModel,
     UniPCMultistepScheduler,
 )
 from diffusers.optimization import get_scheduler
@@ -41,9 +41,8 @@ from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_
 from diffusers.utils.import_utils import is_xformers_available
 from diffusers.utils.torch_utils import is_compiled_module
 from powerpaint.datasets import ProbPickingDataset
-from powerpaint.models import BrushNetModel
+from powerpaint.models import BrushNetModel, UNet2DConditionModel
 from powerpaint.pipelines import StableDiffusionPowerPaintBrushNetPipeline
-from powerpaint.utils import TokenizerWrapper, add_tokens
 
 
 if is_wandb_available():
@@ -53,17 +52,6 @@ if is_wandb_available():
 check_min_version("0.27.0.dev0")
 
 logger = get_logger(__name__)
-
-
-def image_grid(imgs, rows, cols):
-    assert len(imgs) == rows * cols
-
-    w, h = imgs[0].size
-    grid = Image.new("RGB", size=(cols * w, rows * h))
-
-    for i, img in enumerate(imgs):
-        grid.paste(img, box=(i % cols * w, i // cols * h))
-    return grid
 
 
 def log_validation(
@@ -159,7 +147,6 @@ def save_model_card(repo_id: str, image_logs=None, base_model=str, repo_folder=N
             validation_image.save(os.path.join(repo_folder, "image_control.png"))
             img_str += f"prompt: {validation_prompt}\n"
             images = [validation_image] + images
-            image_grid(images, 1, len(images)).save(os.path.join(repo_folder, f"images_{i}.png"))
             img_str += f"![images_{i})](./images_{i}.png)\n"
 
     model_description = f"""
@@ -515,11 +502,6 @@ def parse_args(input_args=None):
             " more information see https://huggingface.co/docs/accelerate/v0.17.0/en/package_reference/accelerator#accelerate.Accelerator"
         ),
     )
-    parser.add_argument(
-        "--random_mask",
-        action="store_true",
-        help=("Training PowerPaint with random mask"),
-    )
 
     if input_args is not None:
         args = parser.parse_args(input_args)
@@ -561,26 +543,6 @@ def parse_args(input_args=None):
     return args
 
 
-def collate_fn(examples):
-    pixel_values = torch.stack([example["pixel_values"] for example in examples])
-    pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
-
-    conditioning_pixel_values = torch.stack([example["conditioning_pixel_values"] for example in examples])
-    conditioning_pixel_values = conditioning_pixel_values.to(memory_format=torch.contiguous_format).float()
-
-    masks = torch.stack([example["masks"] for example in examples])
-    masks = masks.to(memory_format=torch.contiguous_format).float()
-
-    input_ids = torch.stack([example["input_ids"] for example in examples])
-
-    return {
-        "pixel_values": pixel_values,
-        "conditioning_pixel_values": conditioning_pixel_values,
-        "masks": masks,
-        "input_ids": input_ids,
-    }
-
-
 def main(args):
     if args.report_to == "wandb" and args.hub_token is not None:
         raise ValueError(
@@ -589,15 +551,12 @@ def main(args):
         )
 
     logging_dir = Path(args.output_dir, args.logging_dir)
-
-    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=False)  # True)
     accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=logging_dir)
     accelerator = Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         mixed_precision=args.mixed_precision,
         log_with=args.report_to,
         project_config=accelerator_project_config,
-        kwargs_handlers=[ddp_kwargs],
     )
 
     # Make one log on every process with the configuration for debugging.
@@ -618,7 +577,6 @@ def main(args):
     if args.seed is not None:
         torch.manual_seed(args.seed)
         set_seed(args.seed)
-        print("seed:", args.seed)
 
     # Handle the repository creation
     if accelerator.is_main_process:
@@ -630,7 +588,7 @@ def main(args):
                 repo_id=args.hub_model_id or Path(args.output_dir).name, exist_ok=True, token=args.hub_token
             ).repo_id
 
-    # Load the tokenizer
+    # Load tokenizer
     if args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, revision=args.revision, use_fast=False)
     elif args.pretrained_model_name_or_path:
@@ -701,6 +659,9 @@ def main(args):
     unet.requires_grad_(False)
     brushnet.train()
 
+    if args.gradient_checkpointing:
+        brushnet.enable_gradient_checkpointing()
+
     if args.enable_xformers_memory_efficient_attention:
         if is_xformers_available():
             import xformers
@@ -714,9 +675,6 @@ def main(args):
             brushnet.enable_xformers_memory_efficient_attention()
         else:
             raise ValueError("xformers is not available. Make sure it is installed correctly")
-
-    if args.gradient_checkpointing:
-        brushnet.enable_gradient_checkpointing()
 
     # Check that all trainable models are in full precision
     low_precision_error_string = (
@@ -750,17 +708,59 @@ def main(args):
     else:
         optimizer_class = torch.optim.AdamW
 
-    # Load the tokenizer and transforms used for dataloader
-    data_tokenizer = TokenizerWrapper(
-        from_pretrained=args.pretrained_model_name_or_path, subfolder="tokenizer", revision=None
+    # add learnable tokens for task prompts into tokenizer
+    # adding dummy tokens for multi-vector
+    for name, task in args.task_prompt.items():
+        num_added_vectors, num_tries = 0, 0
+        added_placeholder_tokens = []
+        placeholder_tokens = task["placeholder_tokens"]
+        while True:
+            assert num_tries < 100, "Too many tries to add tokens. please use other placeholder token"
+            single_added_vector = tokenizer.add_tokens([placeholder_tokens])
+            # Successfully added new token
+            if single_added_vector == 1:
+                num_added_vectors += 1
+                added_placeholder_tokens.append(placeholder_tokens)
+            if num_added_vectors == task["num_vectors_per_token"]:
+                break
+            placeholder_tokens += f"_{num_added_vectors}"
+        # save the added placeholder_tokens
+        task["added_placeholder_tokens"] = added_placeholder_tokens
+
+        # convert the initializer_token and placeholder_token to ids
+        token_ids = tokenizer.encode(task["initializer_token"], add_special_tokens=False)
+        if len(token_ids) > 1:
+            raise ValueError("The initializer token should be a single token.")
+
+        initializer_token_id = token_ids[0]
+        placeholder_token_ids = tokenizer.convert_tokens_to_ids(added_placeholder_tokens)
+
+        # Resize the token embeddings as we are adding new special tokens to the tokenizer
+        text_encoder.resize_token_embeddings(len(tokenizer))
+
+        # Initialise the newly added placeholder token with the embeddings of the initializer token
+        token_embeds = text_encoder.get_input_embeddings().weight.data
+        with torch.no_grad():
+            for token_id in placeholder_token_ids:
+                token_embeds[token_id] = token_embeds[initializer_token_id].clone()
+
+    # Freeze all parameters except for the token embeddings in text encoder
+    text_encoder.requires_grad_(False)
+    text_encoder.text_model.encoder.requires_grad_(False)
+    text_encoder.text_model.final_layer_norm.requires_grad_(False)
+    text_encoder.text_model.embeddings.position_embedding.requires_grad_(False)
+    text_encoder.train()
+
+    # 1. trainable embedding + 2. trainable model (brushnet)
+    optimizer = optimizer_class(
+        list(brushnet.parameters()) + list(text_encoder.get_input_embeddings().parameters()),
+        lr=args.learning_rate,
+        betas=(args.adam_beta1, args.adam_beta2),
+        weight_decay=args.adam_weight_decay,
+        eps=args.adam_epsilon,
     )
-    add_tokens(
-        tokenizer=data_tokenizer,
-        text_encoder=text_encoder,
-        placeholder_tokens=["P_ctxt", "P_shape", "P_obj", "P_abc"],
-        initialize_tokens=["a", "a", "a", "a"],
-        num_vectors_per_token=10,
-    )
+
+    # transforms used for preprocessing dataset
     train_transforms = transforms.Compose(
         [
             transforms.Resize(args.resolution, interpolation=transforms.InterpolationMode.BILINEAR),
@@ -776,7 +776,7 @@ def main(args):
     datasets_list = []
     for d in args.train_data.datasets:
         dataset_class = getattr(powerpaint.datasets, d.dataset_class)
-        dataset_ = dataset_class(train_transforms, data_tokenizer, **d)
+        dataset_ = dataset_class(train_transforms, tokenizer, args.task_prompt, **d)
         datasets_list.append({"dataset": dataset_, "prob": d.prob})
 
     train_dataset = ProbPickingDataset(datasets_list)
@@ -789,20 +789,6 @@ def main(args):
         train_dataset,
         batch_size=args.train_batch_size,
         num_workers=args.dataloader_num_workers,
-    )
-
-    # set trainable parameters
-    text_encoder.requires_grad_(False)
-    text_encoder.text_model.embeddings.token_embedding.trainable_embeddings.requires_grad_(True)
-    text_encoder.train()
-    # 1. trainable embedding + 2. trainable model
-    optimizer = optimizer_class(
-        list(brushnet.parameters())
-        + list(text_encoder.text_model.embeddings.token_embedding.trainable_embeddings.parameters()),
-        lr=args.learning_rate,
-        betas=(args.adam_beta1, args.adam_beta2),
-        weight_decay=args.adam_weight_decay,
-        eps=args.adam_epsilon,
     )
 
     # Scheduler and math around the number of training steps.
@@ -854,7 +840,6 @@ def main(args):
         tracker_config.pop("validation_prompt")
         tracker_config.pop("validation_image")
         tracker_config.pop("validation_mask")
-        tracker_config.pop("random_mask")
 
         accelerator.init_trackers(args.tracker_project_name, config=tracker_config)
 
@@ -919,13 +904,12 @@ def main(args):
             IO_time = end - IO_start
             with accelerator.accumulate(brushnet):
                 # Convert images to latent space
-                input_img = torch.cat(batch["pixel_values"], dim=0)
-                latents = vae.encode(input_img.to(weight_dtype)).latent_dist.sample()
+                latents = vae.encode(batch["pixel_values"].to(dtype=weight_dtype)).latent_dist.sample().detach()
                 latents = latents * vae.config.scaling_factor
 
-                mask = torch.cat(batch["mask"], dim=0)
-                mask_image = input_img * (mask < 0.5) - mask
-                mask = torch.nn.functional.interpolate(mask, size=(64, 64))
+                # mask: 1 for masked regions 0 for known regions
+                mask = torch.nn.functional.interpolate(batch["mask"], size=(64, 64))
+                mask_image = batch["pixel_values"] * (1.0 - batch["mask"])
                 mask_image_latents = vae.encode(mask_image.to(weight_dtype)).latent_dist.sample()
                 mask_image_latents = (mask_image_latents * vae.config.scaling_factor).to(weight_dtype)
 
@@ -943,44 +927,28 @@ def main(args):
                 # (this is the forward diffusion process)
                 noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
-                # Get the text embedding for conditioning
-                input_tokenA = torch.cat(batch["input_idsA"], dim=0)
-                input_tokenB = torch.cat(batch["input_idsB"], dim=0)
-                input_tokenC = torch.cat(batch["input_idsC"], dim=0)
-                input_token = torch.cat(batch["input_ids"], dim=0)
+                # Get the text embedding for conditioning unet
+                encoder_hidden_states_unet = text_encoder(batch["input_ids"], return_dict=False)[0]
 
-                input_tokenABC = torch.cat((input_tokenA, input_tokenB, input_tokenC, input_token), dim=0)
-                encoder_hidden_statesABC = text_encoder(input_tokenABC, return_dict=False)[0]
-                ABCshape = encoder_hidden_statesABC.shape
-                encoder_hidden_statesAB = encoder_hidden_statesABC[: int(ABCshape[0] / 4 * 2), :, :]
-                encoder_hidden_statesC = encoder_hidden_statesABC[
-                    int(ABCshape[0] / 4 * 2) : int(ABCshape[0] / 4 * 3), :, :
-                ]
-                encoder_hidden_states_unet = encoder_hidden_statesABC[int(ABCshape[0] / 4 * 3) :, :, :]
+                # text embedding for brushnet, (bs, 77, 768)
+                encoder_hidden_statesA = text_encoder(batch["input_idsA"], return_dict=False)[0]
+                encoder_hidden_statesB = text_encoder(batch["input_idsB"], return_dict=False)[0]
+                encoder_hidden_statesC = text_encoder(batch["input_idsC"], return_dict=False)[0]
 
-                ABshape = encoder_hidden_statesAB.shape
-                encoder_hidden_statesA = encoder_hidden_statesAB[: int(ABshape[0] / 2), :, :]
-                encoder_hidden_statesB = encoder_hidden_statesAB[int(ABshape[0] / 2) :, :, :]
-                Ashape = encoder_hidden_statesA.shape
-                encoder_hidden_statesA = encoder_hidden_statesA.reshape(Ashape[0] * Ashape[1], Ashape[2])
-                Bshape = encoder_hidden_statesB.shape
-                encoder_hidden_statesB = encoder_hidden_statesB.reshape(Bshape[0] * Bshape[1], Bshape[2])
-                tradeoff = torch.cat(batch["tradeoff"], dim=0).unsqueeze(1)
-                tradeoff = torch.repeat_interleave(tradeoff, Ashape[1], dim=1)
-                tradeoff = tradeoff.reshape(Ashape[0] * Ashape[1], tradeoff.shape[-1])
-
-                rate = 1e-17
-                encoder_hidden_states = (
-                    tradeoff[:, 0:1] * encoder_hidden_statesA
-                    + (1 - tradeoff[:, 0:1]) * encoder_hidden_statesB.detach()
-                    + rate * encoder_hidden_statesC.reshape(Ashape[0] * Ashape[1], Ashape[2])
+                # tradeoff between two text embeddings (bs, 2, 1)
+                tradeoff = batch["tradeoff"].unsqueeze(-1)
+                encoder_hidden_states_brushnet = (
+                    tradeoff[:, 0:1, :] * encoder_hidden_statesA + tradeoff[:, 1:, :] * encoder_hidden_statesB.detach()
                 )
-                encoder_hidden_states = encoder_hidden_states.reshape(Ashape)
 
+                # wegiht for the default prompt placeholder
+                encoder_hidden_states_brushnet += 1e-17 * encoder_hidden_statesC
+
+                # Run the brushnet forward pass
                 down_block_res_samples, mid_block_res_sample, up_block_res_samples = brushnet(
                     noisy_latents,
                     timesteps,
-                    encoder_hidden_states=encoder_hidden_states.to(weight_dtype),
+                    encoder_hidden_states=encoder_hidden_states_brushnet.to(weight_dtype),
                     brushnet_cond=conditioning_latents,
                     return_dict=False,
                 )
@@ -1011,7 +979,7 @@ def main(args):
                     accelerator.clip_grad_norm_(
                         list(brushnet.parameters())
                         + list(
-                            text_encoder.module.text_model.embeddings.token_embedding.trainable_embeddings.parameters()
+                            text_encoder.get_input_embeddings().parameters(),
                         ),
                         args.max_grad_norm,
                     )

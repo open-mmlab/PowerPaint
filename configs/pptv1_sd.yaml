@@ -1,5 +1,6 @@
 pretrained_model_name_or_path: "runwayml/stable-diffusion-v1-5"
-output_dir: "runs/pptv2_bn"
+output_dir: "runs/pptv1_sd"
+use_ema: true
 
 task_prompt: {
   "object_inpainting": {
@@ -51,19 +52,27 @@ train_data:
     }
   ]
 
+
+
 # for accelerator
-gradient_accumulation_steps: 10
+gradient_accumulation_steps: 8
 
 
 learning_rate: 1e-5
-train_batch_size: 6
-dataloader_num_workers: 32
+train_batch_size: 16
+dataloader_num_workers: 6
 
-tracker_project_name: ppt_brushnet
+gradient_checkpointing: true
+
+tracker_project_name: pptv1
 report_to: tensorboard
 
 resume_from_checkpoint: "latest"
 
+checkpointing_steps: 2000
+validation_steps: 1000
 
-checkpointing_steps: 100 #2000
-validation_steps: 100 #1000
+max_train_steps: 200000
+max_grad_norm: 1
+lr_scheduler constant_with_warmup: true
+lr_warmup_steps: 2000

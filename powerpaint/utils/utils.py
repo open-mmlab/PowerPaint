@@ -521,8 +521,6 @@ def add_tokens(
             init_weight = (torch.rand(num_vectors_per_token, len_emb) - 0.5) / 2.0
             initialize_embedding.append(init_weight)
 
-    # initialize_embedding  = torch.cat(initialize_embedding,dim=0)
-
     token_info_all = []
     for ii in range(len(placeholder_tokens)):
         token_info = tokenizer.get_token_info(placeholder_tokens[ii])

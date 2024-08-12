@@ -3,6 +3,7 @@ checkpoints/
 .ruff_cache
 pretrained_weights/
 output/
+runs/
 output
 .venv/
 mlruns/
