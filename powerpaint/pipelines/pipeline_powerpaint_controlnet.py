@@ -479,10 +479,6 @@ class StableDiffusionControlNetInpaintPipeline(
             else:
                 attention_mask = None
 
-            # print("text_input_idsA: ",text_input_idsA)
-            # print("text_input_idsB: ",text_input_idsB)
-            # print('t: ',t)
-
             prompt_embedsA = self.text_encoder(
                 text_input_idsA.to(device),
                 attention_mask=attention_mask,
@@ -495,7 +491,6 @@ class StableDiffusionControlNetInpaintPipeline(
             )
             prompt_embedsB = prompt_embedsB[0]
             prompt_embeds = prompt_embedsA * (t) + (1 - t) * prompt_embedsB
-            # print("prompt_embeds: ",prompt_embeds)
 
         if self.text_encoder is not None:
             prompt_embeds_dtype = self.text_encoder.dtype
@@ -586,7 +581,6 @@ class StableDiffusionControlNetInpaintPipeline(
             # For classifier free guidance, we need to do two forward passes.
             # Here we concatenate the unconditional and text embeddings into a single batch
             # to avoid doing two forward passes
-            # print("prompt_embeds: ",prompt_embeds)
             prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds])
 
         return prompt_embeds

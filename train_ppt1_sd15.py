@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import argparse
+import gc
 import logging
 import math
 import os
@@ -34,10 +35,10 @@ from accelerate.utils import ProjectConfiguration, set_seed
 from huggingface_hub import create_repo, upload_folder
 from omegaconf import OmegaConf
 from packaging import version
+from PIL import Image
 from torchvision import transforms
 from tqdm.auto import tqdm
-from transformers import CLIPTextModel, CLIPTokenizer
-from transformers.utils import ContextManagers
+from transformers import CLIPTokenizer, PretrainedConfig
 
 import diffusers
 import powerpaint.datasets
@@ -47,6 +48,7 @@ from diffusers.training_utils import EMAModel, compute_snr
 from diffusers.utils import check_min_version, deprecate, is_wandb_available, make_image_grid
 from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_card
 from diffusers.utils.import_utils import is_xformers_available
+from diffusers.utils.torch_utils import is_compiled_module
 from powerpaint.datasets import ProbPickingDataset
 
 
@@ -55,7 +57,7 @@ if is_wandb_available():
 
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
-check_min_version("0.27.0")
+check_min_version("0.27.0.dev0")
 
 logger = get_logger(__name__, log_level="INFO")
 
@@ -132,19 +134,20 @@ More information on all the CLI arguments and the environment are available on y
     model_card.save(os.path.join(repo_folder, "README.md"))
 
 
-def log_validation(vae, text_encoder, tokenizer, unet, args, accelerator, weight_dtype, epoch):
+def log_validation(vae, text_encoder, tokenizer, unet, args, accelerator, weight_dtype, step):
     logger.info("Running validation... ")
 
     pipeline = StableDiffusionPipeline.from_pretrained(
         args.pretrained_model_name_or_path,
-        vae=accelerator.unwrap_model(vae),
-        text_encoder=accelerator.unwrap_model(text_encoder),
+        vae=vae,
+        text_encoder=text_encoder,
         tokenizer=tokenizer,
-        unet=accelerator.unwrap_model(unet),
+        unet=unet,
         safety_checker=None,
         revision=args.revision,
         variant=args.variant,
         torch_dtype=weight_dtype,
+        local_files_only=True,  # load files from local cache
     )
     pipeline = pipeline.to(accelerator.device)
     pipeline.set_progress_bar_config(disable=True)
@@ -152,28 +155,42 @@ def log_validation(vae, text_encoder, tokenizer, unet, args, accelerator, weight
     if args.enable_xformers_memory_efficient_attention:
         pipeline.enable_xformers_memory_efficient_attention()
 
-    if args.seed is None:
-        generator = None
-    else:
-        generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
+    # load validation images
+    image_logs = []
+    for case in args.validation_data.cases:
+        validation_image = Image.open(os.path.join(args.validation_data.data_root, case["image"])).convert("RGB")
+        validation_mask = Image.open(os.path.join(args.validation_data.data_root, case["mask"])).convert("L")
+        validation_prompts = case["prompt"]
 
-    images = []
-    for i in range(len(args.validation_prompts)):
-        with torch.autocast("cuda"):
-            image = pipeline(args.validation_prompts[i], num_inference_steps=20, generator=generator).images[0]
-
-        images.append(image)
+        for p in range(validation_prompts):
+            with torch.autocast(accelerator.device.type):
+                image = pipeline(
+                    promptA=p["promptA"],
+                    promptB=p["promptB"],
+                    promptU=p["promptU"],
+                    tradeoff=p["tradeoff"],
+                    negative_promptA=p.get("negative_promptA", None),
+                    negative_promptB=p.get("negative_promptB", None),
+                    negative_promptU=p.get("negative_promptU", None),
+                    image=validation_image,
+                    mask=validation_mask,
+                    num_inference_steps=20,
+                ).images[0]
+                image.save(f"{str(step).zfill(3)}_{p['task']}.png")
+            image_logs.append(image)
+        gc.collect()
+        torch.cuda.empty_cache()
 
     for tracker in accelerator.trackers:
         if tracker.name == "tensorboard":
-            np_images = np.stack([np.asarray(img) for img in images])
-            tracker.writer.add_images("validation", np_images, epoch, dataformats="NHWC")
+            np_images = np.stack([np.asarray(img) for img in image_logs])
+            tracker.writer.add_images("validation", np_images, step, dataformats="NHWC")
         elif tracker.name == "wandb":
             tracker.log(
                 {
                     "validation": [
-                        wandb.Image(image, caption=f"{i}: {args.validation_prompts[i]}")
-                        for i, image in enumerate(images)
+                        wandb.Image(image, caption=f"{p.task}")
+                        for image, p in zip(image_logs, args.validation_data.cases[0].prompt)
                     ]
                 }
             )
@@ -183,7 +200,31 @@ def log_validation(vae, text_encoder, tokenizer, unet, args, accelerator, weight
     del pipeline
     torch.cuda.empty_cache()
 
-    return images
+    return image_logs
+
+
+def import_model_class_from_model_name_or_path(pretrained_model_name_or_path: str, revision: str):
+    text_encoder_config = PretrainedConfig.from_pretrained(
+        pretrained_model_name_or_path,
+        subfolder="text_encoder",
+        revision=revision,
+    )
+    model_class = text_encoder_config.architectures[0]
+
+    if model_class == "CLIPTextModel":
+        from transformers import CLIPTextModel
+
+        return CLIPTextModel
+    elif model_class == "RobertaSeriesModelWithTransformation":
+        from diffusers.pipelines.alt_diffusion.modeling_roberta_series import RobertaSeriesModelWithTransformation
+
+        return RobertaSeriesModelWithTransformation
+    elif model_class == "T5EncoderModel":
+        from transformers import T5EncoderModel
+
+        return T5EncoderModel
+    else:
+        raise ValueError(f"{model_class} is not supported.")
 
 
 def parse_args():
@@ -562,6 +603,9 @@ def main():
         revision=args.revision,
     )
 
+    # import correct text encoder class
+    text_encoder_cls = import_model_class_from_model_name_or_path(args.pretrained_model_name_or_path, args.revision)
+
     def deepspeed_zero_init_disabled_context_manager():
         """
         returns either a context list that includes one that will disable zero.Init or an empty context list
@@ -572,22 +616,13 @@ def main():
 
         return [deepspeed_plugin.zero3_init_context_manager(enable=False)]
 
-    # Currently Accelerate doesn't know how to handle multiple models under Deepspeed ZeRO stage 3.
-    # For this to work properly all models must be run through `accelerate.prepare`. But accelerate
-    # will try to assign the same optimizer with the same weights to all models during
-    # `deepspeed.initialize`, which of course doesn't work.
-    #
-    # For now the following workaround will partially support Deepspeed ZeRO-3, by excluding the 2
-    # frozen models from being partitioned during `zero.Init` which gets called during
-    # `from_pretrained` So CLIPTextModel and AutoencoderKL will not enjoy the parameter sharding
-    # across multiple gpus and only UNet2DConditionModel will get ZeRO sharded.
-    with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
-        text_encoder = CLIPTextModel.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision
-        )
-        vae = AutoencoderKL.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision
-        )
+    text_encoder = text_encoder_cls.from_pretrained(
+        args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision
+    )
+
+    vae = AutoencoderKL.from_pretrained(
+        args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision, variant=args.variant
+    )
 
     # add learnable tokens for task prompts into tokenizer
     # adding dummy tokens for multi-vector
@@ -674,24 +709,36 @@ def main():
         else:
             raise ValueError("xformers is not available. Make sure it is installed correctly")
 
+    # Taken from [Sayak Paul's Diffusers PR #6511](https://github.com/huggingface/diffusers/pull/6511/files)
+    def unwrap_model(model):
+        model = accelerator.unwrap_model(model)
+        model = model._orig_mod if is_compiled_module(model) else model
+        return model
+
     # `accelerate` 0.16.0 will have better support for customized saving
     if version.parse(accelerate.__version__) >= version.parse("0.16.0"):
         # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
         def save_model_hook(models, weights, output_dir):
-            for i, model in enumerate(models):
-                model.save_pretrained(os.path.join(output_dir, "unet"))
+            if accelerator.is_main_process:
+                for model in models:
+                    sub_dir = "unet" if isinstance(model, type(unwrap_model(unet))) else "text_encoder"
+                    model.save_pretrained(os.path.join(output_dir, sub_dir))
 
-                # make sure to pop weight so that corresponding model is not saved again
-                weights.pop()
+                    # make sure to pop weight so that corresponding model is not saved again
+                    weights.pop()
 
         def load_model_hook(models, input_dir):
-            for i in range(len(models)):
-                # pop models so that they are not loaded again
+            while len(models) > 0:
                 model = models.pop()
 
-                # load diffusers style into model
-                load_model = UNet2DConditionModel.from_pretrained(input_dir, subfolder="unet")
-                model.register_to_config(**load_model.config)
+                if isinstance(model, type(unwrap_model(text_encoder))):
+                    # load transformers style into model
+                    load_model = text_encoder_cls.from_pretrained(input_dir, subfolder="text_encoder")
+                    model.config = load_model.config
+                else:
+                    # load diffusers style into model
+                    load_model = UNet2DConditionModel.from_pretrained(input_dir, subfolder="unet")
+                    model.register_to_config(**load_model.config)
 
                 model.load_state_dict(load_model.state_dict())
                 del load_model
@@ -782,8 +829,6 @@ def main():
         unet, optimizer, train_dataloader, lr_scheduler, text_encoder
     )
 
-    print("accelerator.device: ", accelerator.device)
-
     # For mixed precision training we cast all non-trainable weights (vae, non-lora text_encoder and non-lora unet) to half-precision
     # as these weights are only used for inference, keeping weights in full precision is not required.
     weight_dtype = torch.float32
@@ -809,7 +854,6 @@ def main():
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
         tracker_config = dict(vars(args))
-        tracker_config.pop("validation_prompts")
 
         # tensorboard cannot handle list types for config
         pop_list = []
@@ -825,7 +869,7 @@ def main():
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
-    logger.info("***** Running training *****")
+    logger.info(f"***** Running training for {args.tracker_project_name} *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
     logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
@@ -847,13 +891,11 @@ def main():
             path = dirs[-1] if len(dirs) > 0 else None
 
         if path is None:
-            accelerator.print(
-                f"Checkpoint '{args.resume_from_checkpoint}' does not exist. Starting a new training run."
-            )
+            logger.info(f"Checkpoint '{args.resume_from_checkpoint}' does not exist. Starting a new training run.")
             args.resume_from_checkpoint = None
             initial_global_step = 0
         else:
-            accelerator.print(f"Resuming from checkpoint {path}")
+            logger.info(f"Resuming from checkpoint {path}")
             accelerator.load_state(os.path.join(args.output_dir, path))
             global_step = int(path.split("-")[1])
 
@@ -955,7 +997,6 @@ def main():
 
                 # Backpropagate
                 accelerator.backward(loss)
-                # print(loss.grad)
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(
                         list(unet.parameters()) + list(text_encoder.get_input_embeddings().parameters()),
@@ -1006,7 +1047,7 @@ def main():
                 break
 
         if accelerator.is_main_process:
-            if args.validation_prompts is not None and epoch % args.validation_epochs == 0:
+            if args.get("validation_data", None) is not None and epoch % args.validation_epochs == 0:
                 log_validation(
                     vae,
                     text_encoder,

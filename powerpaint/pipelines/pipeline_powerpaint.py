@@ -421,7 +421,6 @@ class StableDiffusionInpaintPipeline(
             )
             prompt_embedsB = prompt_embedsB[0]
             prompt_embeds = prompt_embedsA * (t) + (1 - t) * prompt_embedsB
-            # print("prompt_embeds: ",prompt_embeds)
 
         if self.text_encoder is not None:
             prompt_embeds_dtype = self.text_encoder.dtype

@@ -11,6 +11,7 @@ import shutil
 from pathlib import Path
 
 import accelerate
+import numpy as np
 import torch
 import torch.nn.functional as F
 import torch.utils.checkpoint
@@ -45,7 +46,7 @@ from powerpaint.pipelines import StableDiffusionPowerPaintBrushNetPipeline
 
 
 if is_wandb_available():
-    pass
+    import wandb
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.27.0.dev0")
@@ -98,7 +99,8 @@ These are PowerPaint weights trained on {base_model} with new type of conditioni
 def log_validation(vae, text_encoder, tokenizer, unet, brushnet, args, accelerator, weight_dtype, step):
     logger.info("Running validation... ")
 
-    brushnet = accelerate.unwrap_model(brushnet)
+    # load the pipeline
+    brushnet = accelerator.unwrap_model(brushnet)
     pipeline = StableDiffusionPowerPaintBrushNetPipeline.from_pretrained(
         args.pretrained_model_name_or_path,
         vae=vae,
@@ -120,49 +122,51 @@ def log_validation(vae, text_encoder, tokenizer, unet, brushnet, args, accelerat
     if args.enable_xformers_memory_efficient_attention:
         pipeline.enable_xformers_memory_efficient_attention()
 
-    if len(args.validation_image) == len(args.validation_prompt) and len(args.validation_image) == len(
-        args.validation_mask
-    ):
-        validation_images = args.validation_image
-        validation_prompts = args.validation_prompt
-        validation_masks = args.validation_mask
-    else:
-        raise ValueError(
-            "number of `args.validation_image` and `args.validation_prompt` should be checked in `parse_args`"
-        )
-
+    # load validation images
     image_logs = []
-    for validation_prompt, validation_image, validation_mask in zip(
-        validation_prompts, validation_images, validation_masks
-    ):
-        validation_image = Image.open(validation_image).convert("RGB")
-        validation_mask = Image.open(validation_mask).convert("RGB")
-        validation_image = Image.composite(
-            Image.new("RGB", (validation_image.size[0], validation_image.size[1]), (0, 0, 0)),
-            validation_image,
-            validation_mask.convert("L"),
-        )
+    for case in args.validation_data.cases:
+        validation_image = Image.open(os.path.join(args.validation_data.data_root, case.image)).convert("RGB")
+        validation_mask = Image.open(os.path.join(args.validation_data.data_root, case.mask)).convert("L")
+        validation_prompts = case.prompt
 
-        images = []
-
-        for _ in range(args.num_validation_images):
+        for p in range(validation_prompts):
             with torch.autocast(accelerator.device.type):
                 image = pipeline(
-                    validation_prompt,
-                    validation_image,
-                    validation_mask,
+                    promptA=p.promptA,
+                    promptB=p.promptB,
+                    promptU=p.promptU,
+                    tradeoff=p.tradeoff,
+                    negative_promptA=p.get("negative_promptA", None),
+                    negative_promptB=p.get("negative_promptB", None),
+                    negative_promptU=p.get("negative_promptU", None),
+                    image=validation_image,
+                    mask=validation_mask,
                     num_inference_steps=20,
                 ).images[0]
+                image.save(f"{str(step).zfill(3)}_{p.task}.png")
+            image_logs.append(image)
 
-                image.save(str(step) + ".png")
+    for tracker in accelerator.trackers:
+        if tracker.name == "tensorboard":
+            np_images = np.stack([np.asarray(img) for img in image_logs])
+            tracker.writer.add_images("validation", np_images, step, dataformats="NHWC")
+        elif tracker.name == "wandb":
+            tracker.log(
+                {
+                    "validation": [
+                        wandb.Image(image, caption=f"{p.task}")
+                        for image, p in zip(image_logs, args.validation_data.cases[0].prompt)
+                    ]
+                }
+            )
+        else:
+            logger.warning(f"image logging not implemented for {tracker.name}")
 
-            images.append(image)
+    del pipeline
+    gc.collect()
+    torch.cuda.empty_cache()
 
-        del pipeline
-        gc.collect()
-        torch.cuda.empty_cache()
-
-        return image_logs
+    return image_logs
 
 
 def import_model_class_from_model_name_or_path(pretrained_model_name_or_path: str, revision: str):
@@ -455,47 +459,6 @@ def parse_args(input_args=None):
         help="Proportion of image prompts to be replaced with empty strings. Defaults to 0 (no prompt replacement).",
     )
     parser.add_argument(
-        "--validation_prompt",
-        type=str,
-        default=["A cake on the table."],
-        nargs="+",
-        help=(
-            "A set of prompts evaluated every `--validation_steps` and logged to `--report_to`."
-            " Provide either a matching number of `--validation_image`s, a single `--validation_image`"
-            " to be used with all prompts, or a single prompt that will be used with all `--validation_image`s."
-        ),
-    )
-    parser.add_argument(
-        "--validation_image",
-        type=str,
-        default=["examples/test_image.jpg"],
-        nargs="+",
-        help=(
-            "A set of paths to the paintingnet conditioning image be evaluated every `--validation_steps`"
-            " and logged to `--report_to`. Provide either a matching number of `--validation_prompt`s, a"
-            " a single `--validation_prompt` to be used with all `--validation_image`s, or a single"
-            " `--validation_image` that will be used with all `--validation_prompt`s."
-        ),
-    )
-    parser.add_argument(
-        "--validation_mask",
-        type=str,
-        default=["examples/test_mask.jpg"],
-        nargs="+",
-        help=(
-            "A set of paths to the paintingnet conditioning image be evaluated every `--validation_steps`"
-            " and logged to `--report_to`. Provide either a matching number of `--validation_prompt`s, a"
-            " a single `--validation_prompt` to be used with all `--validation_image`s, or a single"
-            " `--validation_image` that will be used with all `--validation_prompt`s."
-        ),
-    )
-    parser.add_argument(
-        "--num_validation_images",
-        type=int,
-        default=1,
-        help="Number of images to be generated for each `--validation_image`, `--validation_prompt` pair",
-    )
-    parser.add_argument(
         "--snr_gamma",
         type=float,
         default=None,
@@ -535,24 +498,6 @@ def parse_args(input_args=None):
 
     if args.proportion_empty_prompts < 0 or args.proportion_empty_prompts > 1:
         raise ValueError("`--proportion_empty_prompts` must be in the range [0, 1].")
-
-    if args.validation_prompt is not None and args.validation_image is None:
-        raise ValueError("`--validation_image` must be set if `--validation_prompt` is set")
-
-    if args.validation_prompt is None and args.validation_image is not None:
-        raise ValueError("`--validation_prompt` must be set if `--validation_image` is set")
-
-    if (
-        args.validation_image is not None
-        and args.validation_prompt is not None
-        and len(args.validation_image) != 1
-        and len(args.validation_prompt) != 1
-        and len(args.validation_image) != len(args.validation_prompt)
-    ):
-        raise ValueError(
-            "Must provide either 1 `--validation_image`, 1 `--validation_prompt`,"
-            " or the same number of `--validation_prompt`s and `--validation_image`s"
-        )
 
     if args.resolution % 8 != 0:
         raise ValueError(
@@ -652,7 +597,7 @@ def main(args):
         def save_model_hook(models, weights, output_dir):
             if accelerator.is_main_process:
                 for model in models:
-                    sub_dir = "ppt_bn" if isinstance(model, type(unwrap_model(brushnet))) else "text_encoder"
+                    sub_dir = "brushnet" if isinstance(model, type(unwrap_model(brushnet))) else "text_encoder"
                     model.save_pretrained(os.path.join(output_dir, sub_dir))
 
                     # make sure to pop weight so that corresponding model is not saved again
@@ -668,7 +613,7 @@ def main(args):
                     model.config = load_model.config
                 else:
                     # load diffusers style into model
-                    load_model = UNet2DConditionModel.from_pretrained(input_dir, subfolder="ppt_bn")
+                    load_model = BrushNetModel.from_pretrained(input_dir, subfolder="brushnet")
                     model.register_to_config(**load_model.config)
 
                 model.load_state_dict(load_model.state_dict())
@@ -872,7 +817,7 @@ def main(args):
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
-    logger.info("***** Running training *****")
+    logger.info(f"***** Running training for {args.tracker_project_name} *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
     logger.info(f"  Num Epochs = {args.num_train_epochs}")
     logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
@@ -894,9 +839,7 @@ def main(args):
             path = dirs[-1] if len(dirs) > 0 else None
 
         if path is None:
-            accelerator.print(
-                f"Checkpoint '{args.resume_from_checkpoint}' does not exist. Starting a new training run."
-            )
+            logger.info(f"Checkpoint '{args.resume_from_checkpoint}' does not exist. Starting a new training run.")
             args.resume_from_checkpoint = None
             initial_global_step = 0
         else:
@@ -959,10 +902,10 @@ def main(args):
                     tradeoff[:, 0:1, :] * encoder_hidden_statesA + tradeoff[:, 1:, :] * encoder_hidden_statesB.detach()
                 )
 
-                # wegiht for the default prompt placeholder
-                if False:
-                    encoder_hidden_statesC = text_encoder(batch["input_idsC"], return_dict=False)[0]
-                    encoder_hidden_states_brushnet += 1e-17 * encoder_hidden_statesC
+                # # wegiht for the default prompt placeholder
+                # if False:
+                #     encoder_hidden_statesC = text_encoder(batch["input_idsC"], return_dict=False)[0]
+                #     encoder_hidden_states_brushnet += 1e-17 * encoder_hidden_statesC
 
                 # Run the brushnet forward pass
                 down_block_res_samples, mid_block_res_sample, up_block_res_samples = brushnet(
@@ -1058,7 +1001,7 @@ def main(args):
                         accelerator.save_state(save_path)
                         logger.info(f"Saved state to {save_path}")
 
-                    if args.validation_prompt is not None and global_step % args.validation_steps == 0:
+                    if args.validation_data is not None and global_step % args.validation_steps == 0:
                         image_logs = log_validation(
                             vae,
                             text_encoder,
@@ -1085,7 +1028,7 @@ def main(args):
 
         # Run a final round of validation.
         image_logs = None
-        if args.validation_prompt is not None:
+        if args.validation_data is not None:
             image_logs = log_validation(
                 vae=vae,
                 text_encoder=text_encoder,

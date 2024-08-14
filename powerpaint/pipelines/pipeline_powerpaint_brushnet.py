@@ -179,13 +179,12 @@ class StableDiffusionPowerPaintBrushNetPipeline(
         self,
         vae: AutoencoderKL,
         text_encoder: CLIPTextModel,
-        text_encoder_brushnet: CLIPTextModel,
         tokenizer: CLIPTokenizer,
         unet: UNet2DConditionModel,
         brushnet: BrushNetModel,
         scheduler: KarrasDiffusionSchedulers,
         safety_checker: StableDiffusionSafetyChecker,
-        feature_extractor: CLIPImageProcessor,
+        feature_extractor: CLIPImageProcessor = None,
         image_encoder: CLIPVisionModelWithProjection = None,
         requires_safety_checker: bool = True,
     ):
@@ -396,10 +395,7 @@ class StableDiffusionPowerPaintBrushNetPipeline(
                 return_tensors="pt",
             )
 
-            if (
-                hasattr(self.text_encoder_brushnet.config, "use_attention_mask")
-                and self.text_encoder_brushnet.config.use_attention_mask
-            ):
+            if hasattr(self.text_encoder.config, "use_attention_mask") and self.text_encoder.config.use_attention_mask:
                 attention_mask = uncond_inputA.attention_mask.to(device)
             else:
                 attention_mask = None
@@ -427,7 +423,6 @@ class StableDiffusionPowerPaintBrushNetPipeline(
             # For classifier free guidance, we need to do two forward passes.
             # Here we concatenate the unconditional and text embeddings into a single batch
             # to avoid doing two forward passes
-            # print("prompt_embeds: ",prompt_embeds)
             prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds])
 
         return prompt_embeds
@@ -832,8 +827,8 @@ class StableDiffusionPowerPaintBrushNetPipeline(
         promptA: Union[str, List[str]] = None,
         promptB: Union[str, List[str]] = None,
         promptU: Union[str, List[str]] = None,
-        tradoff: float = 1.0,
-        tradoff_nag: float = 1.0,
+        tradeoff: float = 1.0,
+        tradeoff_nag: float = 1.0,
         image: PipelineImageInput = None,
         mask: PipelineImageInput = None,
         height: Optional[int] = None,
@@ -1056,13 +1051,13 @@ class StableDiffusionPowerPaintBrushNetPipeline(
         prompt_embeds, prompt_embedsU = self._encode_prompt(
             promptA,
             promptB,
-            tradoff,
+            tradeoff,
             device,
             num_images_per_prompt,
             self.do_classifier_free_guidance,
             negative_promptA,
             negative_promptB,
-            tradoff_nag,
+            tradeoff_nag,
             negative_promptU,
             prompt_embeds=prompt_embeds,
             negative_prompt_embeds=negative_prompt_embeds,
@@ -1125,9 +1120,6 @@ class StableDiffusionPowerPaintBrushNetPipeline(
         )
 
         # 6.1 prepare condition latents
-        # mask_i = transforms.ToPILImage()(image[0:1,:,:,:].squeeze(0))
-        # mask_i.save('_mask.png')
-        # print(brushnet.dtype)
         conditioning_latents = (
             self.vae.encode(image.to(device=device, dtype=brushnet.dtype)).latent_dist.sample()
             * self.vae.config.scaling_factor
@@ -1136,10 +1128,6 @@ class StableDiffusionPowerPaintBrushNetPipeline(
             original_mask, size=(conditioning_latents.shape[-2], conditioning_latents.shape[-1])
         )
         conditioning_latents = torch.concat([conditioning_latents, mask], 1)
-        # image = self.vae.decode(conditioning_latents[:1,:4,:,:] / self.vae.config.scaling_factor, return_dict=False, generator=generator)[0]
-        # from torchvision import transforms
-        # mask_i = transforms.ToPILImage()(image[0:1,:,:,:].squeeze(0)/2+0.5)
-        # mask_i.save(str(timesteps[0])  +'_C.png')
 
         # 6.5 Optionally get Guidance Scale Embedding
         timestep_cond = None

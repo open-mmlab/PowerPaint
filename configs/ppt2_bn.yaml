@@ -4,57 +4,55 @@ tracker_project_name: "ppt2_bn"
 report_to: "tensorboard"
 
 # learnable task prompts
-task_prompt: {
-  "object_inpainting": {
-    "placeholder_tokens": "P_obj",
-    "initializer_token": "a",
-    "num_vectors_per_token": 10,
-  },
-  "context_inpainting": {
-    "placeholder_tokens": "P_ctxt",
-    "initializer_token": "a",
-    "num_vectors_per_token": 10,
-  },
-  "shape_inpainting": {
-    "placeholder_tokens": "P_shape",
-    "initializer_token": "a",
-    "num_vectors_per_token": 10,
-  }
-}
+task_prompt:
+  object_inpainting:
+    placeholder_tokens: "P_obj"
+    initializer_token: "a"
+    num_vectors_per_token: 10
+
+  context_inpainting:
+    placeholder_tokens: "P_ctxt"
+    initializer_token: "a"
+    num_vectors_per_token: 10
+
+  shape_inpainting:
+    placeholder_tokens: "P_shape"
+    initializer_token: "a"
+    num_vectors_per_token: 10
+
 
 # training data
 train_data:
   resolution: 512
-  datasets: [
-    {
-      name: "laion5b",
+  datasets:
+    - name: "laion5b"
       # the probability of presence during training
-      prob: 0.4,
-      dataset_class: "LaionIterJsonDataset",
-      desc_prefix: false, # set as true to put description in front of task prompt
+      prob: 0.4
+      dataset_class: "LaionIterJsonDataset"
+      desc_prefix: false # set as true to put description in front of task prompt
+
       # you may need to change the path to your own path
-      client_prefix: "laion5b:",
-      anno_root: "laion5b:s3://llm-process/laion-5b/format/v020/laion2B-en/",
-      random_mask_root: "data/lama_mask/",
-      aethetic_score_threshold: 5,
-      bufsize: 100,
-      resolution: 512,
-    },
-    {
-      name: "openimages",
-      prob: 0.6, # the probability of presence during training
-      dataset_class: "OpenImageBLIPaug_Dataset",
-      desc_prefix: false, #set description in front of task prompt
+      client_prefix: "laion5b:"
+      anno_root: "laion5b:s3://llm-process/laion-5b/format/v020/laion2B-en/"
+      random_mask_root: "data/lama_mask/"
+      aethetic_score_threshold: 5
+      bufsize: 100
+      resolution: 512
+
+    - name: "openimages"
+      prob: 0.6 # the probability of presence during training
+      dataset_class: "OpenImageBLIPaug_Dataset"
+      desc_prefix: false #set description in front of task prompt
+
       # you may need to change the path to your own path
-      image_root: "openmmlab:s3://openmmlab/datasets/detection/OpenImages/OpenImages/train/",
-      mask_root: "data/openimagev6/mask/",
+      image_root: "openmmlab:s3://openmmlab/datasets/detection/OpenImages/OpenImages/train/"
+      mask_root: "data/openimagev6/mask/"
       # prompt that describes segmented objects
-      anno_root: "data/openimagev6/prompt",
-      aethetic_score_threshold: 0.1,
-      bufsize: null,
-      resolution: 512,
-    }
-  ]
+      anno_root: "data/openimagev6/prompt"
+      aethetic_score_threshold: 0.1
+      bufsize: null
+      resolution: 512
+
 
 default_placeholder: true # set as true to avoid find unused_parameters
 
@@ -68,3 +66,31 @@ validation_steps: 10 #1000
 
 
 resume_from_checkpoint: "latest"
+
+
+# validation data
+validation_data:
+  data_root: "examples"
+  cases:
+    - image: "cake.jpg"
+      mask: "cake_object_mask.jpg"
+      prompt:
+        - task: "object_inpainting" # text-guided object inpainting
+          promptA: ${task_prompt.object_inpainting.placeholder_tokens}
+          promptB: ${task_prompt.object_inpainting.placeholder_tokens}
+          promptU: "A cake on the table"
+          tradeoff: 1
+
+        - task: "shape_inpainting" # shape-guided object inpainting
+          promptA: ${task_prompt.shape_inpainting.placeholder_tokens}
+          promptB: ${task_prompt.context_inpainting.placeholder_tokens}
+          promptU: "A cake on the table"
+          tradeoff: 0.9
+
+        - task: "object_removal" # context-guided object remove
+          promptA: ${task_prompt.context_inpainting.placeholder_tokens}
+          promptB: ${task_prompt.context_inpainting.placeholder_tokens}
+          promptU: "high-quality, backgrounds"
+          tradeoff: 1
+          negative_promptA: ${task_prompt.object_inpainting.placeholder_tokens}
+          negative_promptB: ${task_prompt.object_inpainting.placeholder_tokens}
