@@ -1,6 +1,9 @@
 pretrained_model_name_or_path: "runwayml/stable-diffusion-v1-5"
-output_dir: "runs/pptv2_bn"
+output_dir: "runs/ppt2_bn"
+tracker_project_name: "ppt2_bn"
+report_to: "tensorboard"
 
+# learnable task prompts
 task_prompt: {
   "object_inpainting": {
     "placeholder_tokens": "P_obj",
@@ -19,7 +22,7 @@ task_prompt: {
   }
 }
 
-
+# training data
 train_data:
   resolution: 512
   datasets: [
@@ -28,6 +31,7 @@ train_data:
       # the probability of presence during training
       prob: 0.4,
       dataset_class: "LaionIterJsonDataset",
+      desc_prefix: false, # set as true to put description in front of task prompt
       # you may need to change the path to your own path
       client_prefix: "laion5b:",
       anno_root: "laion5b:s3://llm-process/laion-5b/format/v020/laion2B-en/",
@@ -40,6 +44,7 @@ train_data:
       name: "openimages",
       prob: 0.6, # the probability of presence during training
       dataset_class: "OpenImageBLIPaug_Dataset",
+      desc_prefix: false, #set description in front of task prompt
       # you may need to change the path to your own path
       image_root: "openmmlab:s3://openmmlab/datasets/detection/OpenImages/OpenImages/train/",
       mask_root: "data/openimagev6/mask/",
@@ -51,19 +56,15 @@ train_data:
     }
   ]
 
-# for accelerator
-gradient_accumulation_steps: 10
+default_placeholder: true # set as true to avoid find unused_parameters
 
-
+# training hyper-parameters
 learning_rate: 1e-5
-train_batch_size: 6
-dataloader_num_workers: 32
+train_batch_size: 6              # batch size per GPU
+max_train_steps: 300e3           # max training steps
 
-tracker_project_name: ppt_brushnet
-report_to: tensorboard
+checkpointing_steps: 10 #2000
+validation_steps: 10 #1000
+
 
 resume_from_checkpoint: "latest"
-
-
-checkpointing_steps: 100 #2000
-validation_steps: 100 #1000

@@ -5,6 +5,7 @@ import time
 import cv2
 import numpy as np
 import torch
+from accelerate.logging import get_logger
 from petrel_client.client import Client
 from PIL import Image
 from torch.utils.data import IterableDataset
@@ -13,10 +14,12 @@ from torchvision import transforms
 from .utils import INVALID_OPEN_FLAG, save_log
 
 
+logger = get_logger(__name__)
+
 try:
     from petrel_client.client import Client
 except ImportError:
-    print("Failed to import petrel_client. Please install it if you are using petrel-oss.")
+    logger.info("Failed to import petrel_client. Please install it if you are using petrel-oss.")
 
 
 class RandomCrop(object):
@@ -116,6 +119,7 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
         transforms,
         data_tokenizer,
         task_prompt,
+        desc_prefix=False,
         name=None,
         anno_root=None,
         image_root=None,
@@ -156,6 +160,7 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
         self.deterministic = deterministic
         self.tokenizer = data_tokenizer
         self.task_prompt = task_prompt
+        self.desc_prefix = desc_prefix
 
         # for data filter
         self.aesthetic_score_threshold = aesthetic_score_threshold
@@ -240,6 +245,9 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
                 promptA = self.task_prompt["shape_inpainting"]["placeholder_tokens"]
                 promptB = self.task_prompt["context_inpainting"]["placeholder_tokens"]
 
+            if self.desc_prefix:
+                promptA = f"{prompt} {promptA}"
+                promptB = f"{prompt} {promptB}"
             image_name, mask_name = anno_info[0], anno_info[2]
             image_name = image_name[1:] if image_name.startswith("/") else image_name
             mask_name = mask_name[1:] if mask_name.startswith("/") else mask_name
@@ -268,7 +276,7 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
                     else:
                         yield data
                 except Exception:
-                    print(f"Error in {data_info}")
+                    logger.info(f"Error in {data_info}")
                     continue
 
             elif len(buffer) < self.bufsize:
@@ -284,7 +292,7 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
                     data = self._sample_data(selected_data)
                     yield data
                 except Exception:
-                    print(f"Error in {selected_data}")
+                    logger.info(f"Error in {selected_data}")
                     continue
 
                 pipe_end_it = time.time()
@@ -295,7 +303,7 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
             try:
                 yield self._sample_data(data_info)
             except Exception:
-                print(f"Error in {data_info}")
+                logger.info(f"Error in {data_info}")
                 continue
 
     def __iter__(self):

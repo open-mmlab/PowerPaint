@@ -7,17 +7,21 @@ import time
 import cv2
 import numpy as np
 import torch
+from accelerate.logging import get_logger
 from PIL import Image
 from torch.utils.data import IterableDataset
 from torchvision import transforms
 from webdataset import utils
 
+from .utils import save_log
+
+
+logger = get_logger(__name__)
 
 try:
     from petrel_client.client import Client
 except ImportError:
-    print("Failed to import petrel_client. Please install it if you are using petrel-oss.")
-from .utils import save_log
+    logger.info("Failed to import petrel_client. Please install it if you are using petrel-oss.")
 
 
 class LaionIterJsonDataset(IterableDataset):
@@ -33,6 +37,7 @@ class LaionIterJsonDataset(IterableDataset):
         transforms,
         tokenizer,
         task_prompt,
+        desc_prefix=False,
         name=None,
         anno_root=None,
         random_mask_root=None,
@@ -46,6 +51,7 @@ class LaionIterJsonDataset(IterableDataset):
     ):
         super().__init__()
         assert anno_root is not None, "Please provide the path to the annotation files."
+        self.name = name
 
         # for data loading
         self.client_prefix = client_prefix
@@ -67,6 +73,7 @@ class LaionIterJsonDataset(IterableDataset):
         self.deterministic = deterministic
         self.tokenizer = tokenizer
         self.task_prompt = task_prompt
+        self.desc_prefix = desc_prefix
 
         # for data filter
         self.aesthetic_score_threshold = aesthetic_score_threshold
@@ -226,6 +233,9 @@ class LaionIterJsonDataset(IterableDataset):
                     prompt = anno_info["content"]
                 mask_name = random.choice(self.random_mask_list)
 
+            if promptA != "" and promptB != "" and prompt != "" and self.desc_prefix:
+                promptA = f"{prompt} {promptA}"
+                promptB = f"{prompt} {promptB}"
             # 10% probability to drop all conditions for unconditional generation
             if random.random() < 0.1:
                 promptA = ""
@@ -279,7 +289,7 @@ class LaionIterJsonDataset(IterableDataset):
                 try:
                     yield self._sample_data(data_info)
                 except Exception:
-                    print(f"Error in {data_info}")
+                    logger.info(f"Error in {data_info}")
                     continue
 
             elif len(buffer) < self.bufsize:
@@ -298,7 +308,7 @@ class LaionIterJsonDataset(IterableDataset):
                     data = self._sample_data(selected_data)
                     yield data
                 except Exception:
-                    print(f"Error in {selected_data}")
+                    logger.info(f"Error in {selected_data}")
                     continue
                 pipe_end_it = time.time()
                 save_log(f"[Pipe] {pipe_end_it - pipe_start_it:.3f}s")
@@ -307,7 +317,7 @@ class LaionIterJsonDataset(IterableDataset):
             try:
                 yield self._sample_data(data_info)
             except Exception:
-                print(f"Error in {data_info}")
+                logger.info(f"Error in {data_info}")
                 continue
 
     def __iter__(self):

@@ -3,13 +3,11 @@
 # In the version
 
 import argparse
-import contextlib
 import gc
 import logging
 import math
 import os
 import shutil
-import time
 from pathlib import Path
 
 import accelerate
@@ -26,7 +24,7 @@ from packaging import version
 from PIL import Image
 from torchvision import transforms
 from tqdm.auto import tqdm
-from transformers import AutoTokenizer, CLIPTextModel
+from transformers import AutoTokenizer, PretrainedConfig
 
 import diffusers
 import powerpaint.datasets
@@ -36,6 +34,7 @@ from diffusers import (
     UniPCMultistepScheduler,
 )
 from diffusers.optimization import get_scheduler
+from diffusers.training_utils import compute_snr
 from diffusers.utils import check_min_version, is_wandb_available
 from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_card
 from diffusers.utils.import_utils import is_xformers_available
@@ -54,88 +53,6 @@ check_min_version("0.27.0.dev0")
 logger = get_logger(__name__)
 
 
-def log_validation(
-    vae, text_encoder, tokenizer, unet, brushnet, args, accelerator, weight_dtype, step, is_final_validation=False
-):
-    logger.info("Running validation... ")
-
-    if not is_final_validation:
-        brushnet = accelerator.unwrap_model(brushnet)
-    else:
-        brushnet = BrushNetModel.from_pretrained(args.output_dir, torch_dtype=weight_dtype)
-
-    text_encoder = CLIPTextModel.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision
-    )
-
-    pipeline = StableDiffusionPowerPaintBrushNetPipeline.from_pretrained(
-        args.pretrained_model_name_or_path,
-        vae=vae,
-        text_encoder=text_encoder,
-        tokenizer=tokenizer,
-        unet=unet,
-        brushnet=brushnet,
-        safety_checker=None,
-        revision=args.revision,
-        variant=args.variant,
-        torch_dtype=weight_dtype,
-    )
-    pipeline.scheduler = UniPCMultistepScheduler.from_config(pipeline.scheduler.config)
-    pipeline = pipeline.to(accelerator.device)
-    pipeline.set_progress_bar_config(disable=True)
-
-    if args.enable_xformers_memory_efficient_attention:
-        pipeline.enable_xformers_memory_efficient_attention()
-
-    if args.seed is None:
-        generator = None
-    else:
-        generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
-
-    if len(args.validation_image) == len(args.validation_prompt) and len(args.validation_image) == len(
-        args.validation_mask
-    ):
-        validation_images = args.validation_image
-        validation_prompts = args.validation_prompt
-        validation_masks = args.validation_mask
-    else:
-        raise ValueError(
-            "number of `args.validation_image` and `args.validation_prompt` should be checked in `parse_args`"
-        )
-
-    image_logs = []
-    inference_ctx = contextlib.nullcontext() if is_final_validation else torch.autocast("cuda")
-
-    for validation_prompt, validation_image, validation_mask in zip(
-        validation_prompts, validation_images, validation_masks
-    ):
-        validation_image = Image.open(validation_image).convert("RGB")
-        validation_mask = Image.open(validation_mask).convert("RGB")
-        validation_image = Image.composite(
-            Image.new("RGB", (validation_image.size[0], validation_image.size[1]), (0, 0, 0)),
-            validation_image,
-            validation_mask.convert("L"),
-        )
-
-        images = []
-
-        for _ in range(args.num_validation_images):
-            with inference_ctx:
-                image = pipeline(
-                    validation_prompt, validation_image, validation_mask, num_inference_steps=20, generator=generator
-                ).images[0]
-
-                image.save(str(step) + ".png")
-
-            images.append(image)
-
-        del pipeline
-        gc.collect()
-        torch.cuda.empty_cache()
-
-        return image_logs
-
-
 def save_model_card(repo_id: str, image_logs=None, base_model=str, repo_folder=None):
     img_str = ""
     if image_logs is not None:
@@ -144,13 +61,14 @@ def save_model_card(repo_id: str, image_logs=None, base_model=str, repo_folder=N
             images = log["images"]
             validation_prompt = log["validation_prompt"]
             validation_image = log["validation_image"]
-            validation_image.save(os.path.join(repo_folder, "image_control.png"))
+
+            validation_image.save(os.path.join(repo_folder, f"image_{i}.png"))
             img_str += f"prompt: {validation_prompt}\n"
             images = [validation_image] + images
             img_str += f"![images_{i})](./images_{i}.png)\n"
 
     model_description = f"""
-# PowerPaint-{repo_id}
+# PowerPaint - {repo_id}
 
 These are PowerPaint weights trained on {base_model} with new type of conditioning.
 {img_str}
@@ -175,6 +93,100 @@ These are PowerPaint weights trained on {base_model} with new type of conditioni
     model_card = populate_model_card(model_card, tags=tags)
 
     model_card.save(os.path.join(repo_folder, "README.md"))
+
+
+def log_validation(vae, text_encoder, tokenizer, unet, brushnet, args, accelerator, weight_dtype, step):
+    logger.info("Running validation... ")
+
+    brushnet = accelerate.unwrap_model(brushnet)
+    pipeline = StableDiffusionPowerPaintBrushNetPipeline.from_pretrained(
+        args.pretrained_model_name_or_path,
+        vae=vae,
+        text_encoder=text_encoder,
+        tokenizer=tokenizer,
+        unet=unet,
+        brushnet=brushnet,
+        safety_checker=None,
+        revision=args.revision,
+        variant=args.variant,
+        torch_dtype=weight_dtype,
+        local_files_only=True,  # load files from local cache
+    )
+
+    pipeline.scheduler = UniPCMultistepScheduler.from_config(pipeline.scheduler.config)
+    pipeline = pipeline.to(accelerator.device)
+    pipeline.set_progress_bar_config(disable=True)
+
+    if args.enable_xformers_memory_efficient_attention:
+        pipeline.enable_xformers_memory_efficient_attention()
+
+    if len(args.validation_image) == len(args.validation_prompt) and len(args.validation_image) == len(
+        args.validation_mask
+    ):
+        validation_images = args.validation_image
+        validation_prompts = args.validation_prompt
+        validation_masks = args.validation_mask
+    else:
+        raise ValueError(
+            "number of `args.validation_image` and `args.validation_prompt` should be checked in `parse_args`"
+        )
+
+    image_logs = []
+    for validation_prompt, validation_image, validation_mask in zip(
+        validation_prompts, validation_images, validation_masks
+    ):
+        validation_image = Image.open(validation_image).convert("RGB")
+        validation_mask = Image.open(validation_mask).convert("RGB")
+        validation_image = Image.composite(
+            Image.new("RGB", (validation_image.size[0], validation_image.size[1]), (0, 0, 0)),
+            validation_image,
+            validation_mask.convert("L"),
+        )
+
+        images = []
+
+        for _ in range(args.num_validation_images):
+            with torch.autocast(accelerator.device.type):
+                image = pipeline(
+                    validation_prompt,
+                    validation_image,
+                    validation_mask,
+                    num_inference_steps=20,
+                ).images[0]
+
+                image.save(str(step) + ".png")
+
+            images.append(image)
+
+        del pipeline
+        gc.collect()
+        torch.cuda.empty_cache()
+
+        return image_logs
+
+
+def import_model_class_from_model_name_or_path(pretrained_model_name_or_path: str, revision: str):
+    text_encoder_config = PretrainedConfig.from_pretrained(
+        pretrained_model_name_or_path,
+        subfolder="text_encoder",
+        revision=revision,
+    )
+    model_class = text_encoder_config.architectures[0]
+
+    if model_class == "CLIPTextModel":
+        from transformers import CLIPTextModel
+
+        return CLIPTextModel
+    elif model_class == "RobertaSeriesModelWithTransformation":
+        from diffusers.pipelines.alt_diffusion.modeling_roberta_series import RobertaSeriesModelWithTransformation
+
+        return RobertaSeriesModelWithTransformation
+    elif model_class == "T5EncoderModel":
+        from transformers import T5EncoderModel
+
+        return T5EncoderModel
+    else:
+        raise ValueError(f"{model_class} is not supported.")
 
 
 def parse_args(input_args=None):
@@ -484,6 +496,13 @@ def parse_args(input_args=None):
         help="Number of images to be generated for each `--validation_image`, `--validation_prompt` pair",
     )
     parser.add_argument(
+        "--snr_gamma",
+        type=float,
+        default=None,
+        help="SNR weighting gamma to be used if rebalancing the loss. Recommended value is 5.0. "
+        "More details here: https://arxiv.org/abs/2303.09556.",
+    )
+    parser.add_argument(
         "--validation_steps",
         type=int,
         default=100,
@@ -599,16 +618,19 @@ def main(args):
             use_fast=False,
         )
 
+    # import correct text encoder class
+    text_encoder_cls = import_model_class_from_model_name_or_path(args.pretrained_model_name_or_path, args.revision)
+
     # Load scheduler and models
     noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
-    text_encoder = CLIPTextModel.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision
-    )
     vae = AutoencoderKL.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision, variant=args.variant
     )
     unet = UNet2DConditionModel.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision, variant=args.variant
+    )
+    text_encoder = text_encoder_cls.from_pretrained(
+        args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision
     )
 
     if args.powerpaint_model_name_or_path:
@@ -629,25 +651,25 @@ def main(args):
         # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
         def save_model_hook(models, weights, output_dir):
             if accelerator.is_main_process:
-                i = len(weights) - 1
-
-                while len(weights) > 0:
-                    weights.pop()
-                    model = models[i]
-
-                    sub_dir = "powerpaint"
+                for model in models:
+                    sub_dir = "ppt_bn" if isinstance(model, type(unwrap_model(brushnet))) else "text_encoder"
                     model.save_pretrained(os.path.join(output_dir, sub_dir))
 
-                    i -= 1
+                    # make sure to pop weight so that corresponding model is not saved again
+                    weights.pop()
 
         def load_model_hook(models, input_dir):
             while len(models) > 0:
-                # pop models so that they are not loaded again
                 model = models.pop()
 
-                # load diffusers style into model
-                load_model = BrushNetModel.from_pretrained(input_dir, subfolder="powerpaint")
-                model.register_to_config(**load_model.config)
+                if isinstance(model, type(unwrap_model(text_encoder))):
+                    # load transformers style into model
+                    load_model = text_encoder_cls.from_pretrained(input_dir, subfolder="text_encoder")
+                    model.config = load_model.config
+                else:
+                    # load diffusers style into model
+                    load_model = UNet2DConditionModel.from_pretrained(input_dir, subfolder="ppt_bn")
+                    model.register_to_config(**load_model.config)
 
                 model.load_state_dict(load_model.state_dict())
                 del load_model
@@ -808,8 +830,8 @@ def main(args):
     )
 
     # Prepare everything with our `accelerator`.
-    brushnet, optimizer, train_dataloader, lr_scheduler, text_encoder = accelerator.prepare(
-        brushnet, optimizer, train_dataloader, lr_scheduler, text_encoder
+    brushnet, text_encoder, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+        brushnet, text_encoder, optimizer, train_dataloader, lr_scheduler
     )
 
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
@@ -837,9 +859,13 @@ def main(args):
         tracker_config = dict(vars(args))
 
         # tensorboard cannot handle list types for config
-        tracker_config.pop("validation_prompt")
-        tracker_config.pop("validation_image")
-        tracker_config.pop("validation_mask")
+        pop_list = []
+        for k, v in tracker_config.items():
+            if not isinstance(v, (int, float, str, bool, torch.Tensor)):
+                pop_list.append(k)
+                logger.info(f"Removed {k} (type:{type(v)}) from tracker_config")
+        for k in pop_list:
+            tracker_config.pop(k)
 
         accelerator.init_trackers(args.tracker_project_name, config=tracker_config)
 
@@ -852,7 +878,7 @@ def main(args):
     logger.info(f"  Instantaneous batch size per device = {args.train_batch_size}")
     logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
     logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
-    logger.info(f"  Total optimization steps = {args.max_train_steps}")
+    logger.info(f"  Total optimization steps = {int(args.max_train_steps)}")
     global_step = 0
     first_epoch = 0
 
@@ -874,7 +900,7 @@ def main(args):
             args.resume_from_checkpoint = None
             initial_global_step = 0
         else:
-            accelerator.print(f"Resuming from checkpoint {path}")
+            logger.info(f"Resuming from checkpoint {path}")
             accelerator.load_state(os.path.join(args.output_dir, path), map_location="cpu")
             global_step = int(path.split("-")[1])
 
@@ -884,7 +910,7 @@ def main(args):
         initial_global_step = 0
 
     progress_bar = tqdm(
-        range(0, args.max_train_steps),
+        range(0, int(args.max_train_steps)),
         initial=initial_global_step,
         desc="Steps",
         # Only show the progress bar once on each machine.
@@ -893,15 +919,8 @@ def main(args):
 
     image_logs = None
     for _ in range(first_epoch, args.num_train_epochs):
-        start = 0.0
-        IO_start = 0.0
-        end = 0.0
+        train_loss = 0.0
         for step, batch in enumerate(train_dataloader):
-            torch.cuda.synchronize()
-            start = end
-            end = time.time()
-            all_time = end - start
-            IO_time = end - IO_start
             with accelerator.accumulate(brushnet):
                 # Convert images to latent space
                 latents = vae.encode(batch["pixel_values"].to(dtype=weight_dtype)).latent_dist.sample().detach()
@@ -933,7 +952,6 @@ def main(args):
                 # text embedding for brushnet, (bs, 77, 768)
                 encoder_hidden_statesA = text_encoder(batch["input_idsA"], return_dict=False)[0]
                 encoder_hidden_statesB = text_encoder(batch["input_idsB"], return_dict=False)[0]
-                encoder_hidden_statesC = text_encoder(batch["input_idsC"], return_dict=False)[0]
 
                 # tradeoff between two text embeddings (bs, 2, 1)
                 tradeoff = batch["tradeoff"].unsqueeze(-1)
@@ -942,7 +960,9 @@ def main(args):
                 )
 
                 # wegiht for the default prompt placeholder
-                encoder_hidden_states_brushnet += 1e-17 * encoder_hidden_statesC
+                if False:
+                    encoder_hidden_statesC = text_encoder(batch["input_idsC"], return_dict=False)[0]
+                    encoder_hidden_states_brushnet += 1e-17 * encoder_hidden_statesC
 
                 # Run the brushnet forward pass
                 down_block_res_samples, mid_block_res_sample, up_block_res_samples = brushnet(
@@ -972,28 +992,45 @@ def main(args):
                 else:
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
 
-                loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                if args.snr_gamma is None:
+                    loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
+                else:
+                    # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
+                    # Since we predict the noise instead of x_0, the original formulation is slightly changed.
+                    # This is discussed in Section 4.2 of the same paper.
+                    snr = compute_snr(noise_scheduler, timesteps)
+                    mse_loss_weights = torch.stack([snr, args.snr_gamma * torch.ones_like(timesteps)], dim=1).min(
+                        dim=1
+                    )[0]
+                    if noise_scheduler.config.prediction_type == "epsilon":
+                        mse_loss_weights = mse_loss_weights / snr
+                    elif noise_scheduler.config.prediction_type == "v_prediction":
+                        mse_loss_weights = mse_loss_weights / (snr + 1)
+
+                    loss = F.mse_loss(model_pred.float(), target.float(), reduction="none")
+                    loss = loss.mean(dim=list(range(1, len(loss.shape)))) * mse_loss_weights
+                    loss = loss.mean()
+
+                # Gather the losses across all processes for logging (if we use distributed training).
+                avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
+                train_loss += avg_loss.item() / args.gradient_accumulation_steps
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(
-                        list(brushnet.parameters())
-                        + list(
-                            text_encoder.get_input_embeddings().parameters(),
-                        ),
+                        list(brushnet.parameters()) + list(text_encoder.get_input_embeddings().parameters()),
                         args.max_grad_norm,
                     )
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
-                torch.cuda.synchronize()
-                ada_start = time.time()
-                p_time = ada_start - end
 
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
                 progress_bar.update(1)
                 global_step += 1
+                accelerator.log({"train_loss": train_loss}, step=global_step)
+                train_loss = 0.0
 
                 if accelerator.is_main_process:
                     if global_step % args.checkpointing_steps == 0:
@@ -1034,21 +1071,11 @@ def main(args):
                             global_step,
                         )
 
-            logs = {
-                "loss": loss.detach().item(),
-                "lr": lr_scheduler.get_last_lr()[0],
-                "all_time": all_time,
-                "IO_time": IO_time,
-                "p_time": p_time,
-            }
+            logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             progress_bar.set_postfix(**logs)
-            accelerator.log(logs, step=global_step)
 
             if global_step >= args.max_train_steps:
                 break
-
-            torch.cuda.synchronize()
-            IO_start = time.time()
 
     # Create the pipeline using using the trained modules and save it.
     accelerator.wait_for_everyone()

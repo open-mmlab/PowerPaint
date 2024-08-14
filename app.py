@@ -16,7 +16,7 @@ from diffusers.pipelines.controlnet.pipeline_controlnet import ControlNetModel
 from powerpaint.models.BrushNet_CA import BrushNetModel
 from powerpaint.models.unet_2d_condition import UNet2DConditionModel
 from powerpaint.pipelines.pipeline_PowerPaint import StableDiffusionInpaintPipeline as Pipeline
-from powerpaint.pipelines.pipeline_PowerPaint_Brushnet_CA import StableDiffusionPowerPaintBrushNetPipeline
+from powerpaint.pipelines.pipeline_PowerPaint_Brushnet import StableDiffusionPowerPaintBrushNetPipeline
 from powerpaint.pipelines.pipeline_PowerPaint_ControlNet import (
     StableDiffusionControlNetInpaintPipeline as controlnetPipeline,
 )

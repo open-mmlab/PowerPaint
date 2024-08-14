@@ -1,7 +1,9 @@
 pretrained_model_name_or_path: "runwayml/stable-diffusion-v1-5"
-output_dir: "runs/pptv1_sd"
-use_ema: true
+output_dir: "runs/ppt1_sd15"
+tracker_project_name: "ppt1_sd15"
+report_to: "tensorboard"
 
+# learnable task prompts
 task_prompt: {
   "object_inpainting": {
     "placeholder_tokens": "P_obj",
@@ -20,7 +22,7 @@ task_prompt: {
   }
 }
 
-
+# training data
 train_data:
   resolution: 512
   datasets: [
@@ -29,6 +31,7 @@ train_data:
       # the probability of presence during training
       prob: 0.4,
       dataset_class: "LaionIterJsonDataset",
+      desc_prefix: true, # set as true to put description in front of task prompt
       # you may need to change the path to your own path
       client_prefix: "laion5b:",
       anno_root: "laion5b:s3://llm-process/laion-5b/format/v020/laion2B-en/",
@@ -41,6 +44,7 @@ train_data:
       name: "openimages",
       prob: 0.6, # the probability of presence during training
       dataset_class: "OpenImageBLIPaug_Dataset",
+      desc_prefix: true, # set as true to put description in front of task prompt
       # you may need to change the path to your own path
       image_root: "openmmlab:s3://openmmlab/datasets/detection/OpenImages/OpenImages/train/",
       mask_root: "data/openimagev6/mask/",
@@ -52,27 +56,21 @@ train_data:
     }
   ]
 
+default_placeholder: false # set as true to avoid find unused_parameters
 
 
-# for accelerator
-gradient_accumulation_steps: 8
-
-
+# training hyper-parameters
 learning_rate: 1e-5
-train_batch_size: 16
-dataloader_num_workers: 6
+max_train_steps: 200e3            # max training steps
+train_batch_size: 364              # batch size per GPU
+gradient_accumulation_steps: 2
 
 gradient_checkpointing: true
-
-tracker_project_name: pptv1
-report_to: tensorboard
-
 resume_from_checkpoint: "latest"
 
-checkpointing_steps: 2000
-validation_steps: 1000
-
-max_train_steps: 200000
 max_grad_norm: 1
 lr_scheduler constant_with_warmup: true
 lr_warmup_steps: 2000
+
+checkpointing_steps: 10 #2e3
+validation_steps: 10 #1e3

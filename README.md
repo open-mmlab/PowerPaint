@@ -173,7 +173,7 @@ where `configs/acc.yaml` is the configuration file for using accelerate, and `co
 
 PowerPaint-V1 version often requires much larger training batch size to converge (e.g., 1024). You can train it with the following command,
 ```shell
-accelerate launch --config_file configs/acc.yaml train_ppt_sd15.py --config configs/pptv1.yaml
+accelerate launch --config_file configs/acc.yaml train_ppt_sd15.py --config configs/pptv1_sd.yaml
 ```
 
 
