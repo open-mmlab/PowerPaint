@@ -313,8 +313,8 @@ class StableDiffusionInpaintPipeline(
         # We'll offload the last model manually.
         self.final_offload_hook = hook
 
-    # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline._encode_prompt
-    def _encode_prompt(
+    # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.encode_prompt
+    def encode_prompt(
         self,
         promptA,
         promptB,
@@ -727,8 +727,8 @@ class StableDiffusionInpaintPipeline(
         height: Optional[int] = None,
         width: Optional[int] = None,
         strength: float = 1.0,
-        tradoff: float = 1.0,
-        tradoff_nag: float = 1.0,
+        tradeoff: float = 1.0,
+        tradeoff_nag: float = 1.0,
         num_inference_steps: int = 50,
         guidance_scale: float = 7.5,
         negative_promptA: Optional[Union[str, List[str]]] = None,
@@ -885,16 +885,16 @@ class StableDiffusionInpaintPipeline(
         text_encoder_lora_scale = (
             cross_attention_kwargs.get("scale", None) if cross_attention_kwargs is not None else None
         )
-        prompt_embeds = self._encode_prompt(
+        prompt_embeds = self.encode_prompt(
             promptA,
             promptB,
-            tradoff,
+            tradeoff,
             device,
             num_images_per_prompt,
             do_classifier_free_guidance,
             negative_promptA,
             negative_promptB,
-            tradoff_nag,
+            tradeoff_nag,
             prompt_embeds=prompt_embeds,
             negative_prompt_embeds=negative_prompt_embeds,
             lora_scale=text_encoder_lora_scale,

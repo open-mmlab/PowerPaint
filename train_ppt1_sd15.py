@@ -42,14 +42,15 @@ from transformers import CLIPTokenizer, PretrainedConfig
 
 import diffusers
 import powerpaint.datasets
-from diffusers import AutoencoderKL, DDPMScheduler, StableDiffusionPipeline, UNet2DConditionModel
+from diffusers import AutoencoderKL, DDPMScheduler, UNet2DConditionModel
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import EMAModel, compute_snr
-from diffusers.utils import check_min_version, deprecate, is_wandb_available, make_image_grid
+from diffusers.utils import check_min_version, deprecate, is_wandb_available
 from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_card
 from diffusers.utils.import_utils import is_xformers_available
 from diffusers.utils.torch_utils import is_compiled_module
 from powerpaint.datasets import ProbPickingDataset
+from powerpaint.pipelines import StableDiffusionInpaintPipeline
 
 
 if is_wandb_available():
@@ -62,17 +63,19 @@ check_min_version("0.27.0.dev0")
 logger = get_logger(__name__, log_level="INFO")
 
 
-def save_model_card(
-    args,
-    repo_id: str,
-    images: list = None,
-    repo_folder: str = None,
-):
+def save_model_card(args, repo_id: str, image_logs: list = None, repo_folder: str = None):
     img_str = ""
-    if len(images) > 0:
-        image_grid = make_image_grid(images, 1, len(args.validation_prompts))
-        image_grid.save(os.path.join(repo_folder, "val_imgs_grid.png"))
-        img_str += "![val_imgs_grid](./val_imgs_grid.png)\n"
+    if image_logs is not None:
+        img_str = "You can find some example images below.\n\n"
+        for i, log in enumerate(image_logs):
+            images = log["images"]
+            validation_prompt = log["validation_prompt"]
+            validation_image = log["validation_image"]
+
+            validation_image.save(os.path.join(repo_folder, f"image_{i}.png"))
+            img_str += f"prompt: {validation_prompt}\n"
+            images = [validation_image] + images
+            img_str += f"![images_{i})](./images_{i}.png)\n"
 
     model_description = f"""
 # Text-to-image finetuning - {repo_id}
@@ -137,7 +140,8 @@ More information on all the CLI arguments and the environment are available on y
 def log_validation(vae, text_encoder, tokenizer, unet, args, accelerator, weight_dtype, step):
     logger.info("Running validation... ")
 
-    pipeline = StableDiffusionPipeline.from_pretrained(
+    unet = accelerator.unwrap_model(unet)
+    pipeline = StableDiffusionInpaintPipeline.from_pretrained(
         args.pretrained_model_name_or_path,
         vae=vae,
         text_encoder=text_encoder,
@@ -158,25 +162,28 @@ def log_validation(vae, text_encoder, tokenizer, unet, args, accelerator, weight
     # load validation images
     image_logs = []
     for case in args.validation_data.cases:
-        validation_image = Image.open(os.path.join(args.validation_data.data_root, case["image"])).convert("RGB")
-        validation_mask = Image.open(os.path.join(args.validation_data.data_root, case["mask"])).convert("L")
-        validation_prompts = case["prompt"]
+        validation_prompts = case.prompt
+        validation_image = Image.open(os.path.join(args.validation_data.data_root, case.image)).convert("RGB")
+        validation_mask = Image.open(os.path.join(args.validation_data.data_root, case.mask)).convert("RGB")
+        validation_image = Image.composite(
+            Image.new("RGB", (validation_image.size[0], validation_image.size[1]), (0, 0, 0)),
+            validation_image,
+            validation_mask.convert("L"),
+        )
 
-        for p in range(validation_prompts):
+        for p in validation_prompts:
             with torch.autocast(accelerator.device.type):
                 image = pipeline(
-                    promptA=p["promptA"],
-                    promptB=p["promptB"],
-                    promptU=p["promptU"],
-                    tradeoff=p["tradeoff"],
+                    promptA=p.promptA,
+                    promptB=p.promptB,
+                    tradeoff=p.tradeoff,
                     negative_promptA=p.get("negative_promptA", None),
                     negative_promptB=p.get("negative_promptB", None),
-                    negative_promptU=p.get("negative_promptU", None),
                     image=validation_image,
                     mask=validation_mask,
                     num_inference_steps=20,
                 ).images[0]
-                image.save(f"{str(step).zfill(3)}_{p['task']}.png")
+                image.save(os.path.join(args.output_dir, f"{str(step).zfill(3)}_{p.task}.png"))
             image_logs.append(image)
         gc.collect()
         torch.cuda.empty_cache()
@@ -593,8 +600,6 @@ def main():
                 repo_id=args.hub_model_id or Path(args.output_dir).name, exist_ok=True, token=args.hub_token
             ).repo_id
 
-    # Load tokenizer
-
     # Load scheduler, tokenizer and models.
     noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
     tokenizer = CLIPTokenizer.from_pretrained(
@@ -653,12 +658,20 @@ def main():
 
         # Resize the token embeddings as we are adding new special tokens to the tokenizer
         text_encoder.resize_token_embeddings(len(tokenizer))
+        logger.info(f"Added {len(added_placeholder_tokens)} placeholder tokens for task {name}")
 
         # Initialise the newly added placeholder token with the embeddings of the initializer token
         token_embeds = text_encoder.get_input_embeddings().weight.data
         with torch.no_grad():
             for token_id in placeholder_token_ids:
                 token_embeds[token_id] = token_embeds[initializer_token_id].clone()
+
+    # Freeze all parameters except for the token embeddings in text encoder
+    text_encoder.requires_grad_(False)
+    text_encoder.text_model.encoder.requires_grad_(False)
+    text_encoder.text_model.final_layer_norm.requires_grad_(False)
+    text_encoder.text_model.embeddings.position_embedding.requires_grad_(False)
+    text_encoder.train()
 
     # extend unet to with five more channels in conv_in
     unet = UNet2DConditionModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="unet")
@@ -910,12 +923,10 @@ def main():
         # Only show the progress bar once on each machine.
         disable=not accelerator.is_local_main_process,
     )
-    progress_bar = tqdm(range(global_step, int(args.max_train_steps)), disable=not accelerator.is_local_main_process)
-    progress_bar.set_description("Steps")
 
-    for epoch in range(first_epoch, args.num_train_epochs):
+    for _ in range(first_epoch, args.num_train_epochs):
         train_loss = 0.0
-        for step, batch in enumerate(train_dataloader):
+        for batch in train_dataloader:
             with accelerator.accumulate(unet):
                 # Convert images to latent space
                 latents = vae.encode(batch["pixel_values"].to(weight_dtype)).latent_dist.sample()
@@ -1012,11 +1023,12 @@ def main():
                     ema_unet.step(unet.parameters())
                 progress_bar.update(1)
                 global_step += 1
+
                 accelerator.log({"train_loss": train_loss}, step=global_step)
                 train_loss = 0.0
 
-                if global_step % args.checkpointing_steps == 0:
-                    if accelerator.is_main_process:
+                if accelerator.is_main_process:
+                    if global_step % args.checkpointing_steps == 0:
                         # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
                         if args.checkpoints_total_limit is not None:
                             checkpoints = os.listdir(args.output_dir)
@@ -1040,62 +1052,39 @@ def main():
                         accelerator.save_state(save_path)
                         logger.info(f"Saved state to {save_path}")
 
+                    if hasattr(args, "validation_data") is not None and global_step % args.validation_steps == 0:
+                        log_validation(
+                            vae,
+                            text_encoder,
+                            tokenizer,
+                            unet,
+                            args,
+                            accelerator,
+                            weight_dtype,
+                            global_step,
+                        )
+
             logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             progress_bar.set_postfix(**logs)
 
             if global_step >= args.max_train_steps:
                 break
 
-        if accelerator.is_main_process:
-            if args.get("validation_data", None) is not None and epoch % args.validation_epochs == 0:
-                log_validation(
-                    vae,
-                    text_encoder,
-                    tokenizer,
-                    unet,
-                    args,
-                    accelerator,
-                    weight_dtype,
-                    global_step,
-                )
-
     # Create the pipeline using the trained modules and save it.
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
         unet = accelerator.unwrap_model(unet)
 
-        pipeline = StableDiffusionPipeline.from_pretrained(
-            args.pretrained_model_name_or_path,
-            text_encoder=text_encoder,
-            vae=vae,
-            unet=unet,
-            revision=args.revision,
-        )
-        pipeline.save_pretrained(args.output_dir)
-
         # Run a final round of inference.
-        images = []
-        if args.validation_prompts is not None:
+        image_logs = []
+        if hasattr(args, "validation_data"):
             logger.info("Running inference for collecting generated images...")
-            pipeline = pipeline.to(accelerator.device)
-            pipeline.torch_dtype = weight_dtype
-            pipeline.set_progress_bar_config(disable=True)
-
-            if args.enable_xformers_memory_efficient_attention:
-                pipeline.enable_xformers_memory_efficient_attention()
-
-            if args.seed is None:
-                generator = None
-            else:
-                generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
-
-            for i in range(len(args.validation_prompts)):
-                with torch.autocast("cuda"):
-                    image = pipeline(args.validation_prompts[i], num_inference_steps=20, generator=generator).images[0]
-                images.append(image)
+            image_logs = log_validation(
+                vae, text_encoder, tokenizer, unet, args, accelerator, weight_dtype, global_step
+            )
 
         if args.push_to_hub:
-            save_model_card(args, repo_id, images, repo_folder=args.output_dir)
+            save_model_card(args, repo_id, image_logs, repo_folder=args.output_dir)
             upload_folder(
                 repo_id=repo_id,
                 folder_path=args.output_dir,

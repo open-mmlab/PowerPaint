@@ -13,12 +13,11 @@ from transformers import CLIPTextModel, DPTFeatureExtractor, DPTForDepthEstimati
 
 from diffusers import UniPCMultistepScheduler
 from diffusers.pipelines.controlnet.pipeline_controlnet import ControlNetModel
-from powerpaint.models.BrushNet_CA import BrushNetModel
-from powerpaint.models.unet_2d_condition import UNet2DConditionModel
-from powerpaint.pipelines.pipeline_PowerPaint import StableDiffusionInpaintPipeline as Pipeline
-from powerpaint.pipelines.pipeline_PowerPaint_Brushnet import StableDiffusionPowerPaintBrushNetPipeline
-from powerpaint.pipelines.pipeline_PowerPaint_ControlNet import (
-    StableDiffusionControlNetInpaintPipeline as controlnetPipeline,
+from powerpaint.models import BrushNetModel, UNet2DConditionModel
+from powerpaint.pipelines import (
+    StableDiffusionControlNetInpaintPipeline,
+    StableDiffusionInpaintPipeline,
+    StableDiffusionPowerPaintBrushNetPipeline,
 )
 from powerpaint.utils.utils import TokenizerWrapper, add_tokens
 
@@ -88,7 +87,7 @@ class PowerPaintController:
 
         # initialize powerpaint pipeline
         if version == "ppt-v1":
-            self.pipe = Pipeline.from_pretrained(
+            self.pipe = StableDiffusionInpaintPipeline.from_pretrained(
                 "runwayml/stable-diffusion-inpainting", torch_dtype=weight_dtype, local_files_only=local_files_only
             )
             self.pipe.tokenizer = TokenizerWrapper(
@@ -121,7 +120,7 @@ class PowerPaintController:
             base_control = ControlNetModel.from_pretrained(
                 "lllyasviel/sd-controlnet-canny", torch_dtype=weight_dtype, local_files_only=local_files_only
             )
-            self.control_pipe = controlnetPipeline(
+            self.control_pipe = StableDiffusionControlNetInpaintPipeline(
                 self.pipe.vae,
                 self.pipe.text_encoder,
                 self.pipe.tokenizer,
@@ -326,8 +325,8 @@ class PowerPaintController:
             result = self.pipe(
                 promptA=promptA,
                 promptB=promptB,
-                tradoff=fitting_degree,
-                tradoff_nag=fitting_degree,
+                tradeoff=fitting_degree,
+                tradeoff_nag=fitting_degree,
                 negative_promptA=negative_promptA,
                 negative_promptB=negative_promptB,
                 image=input_image["image"].convert("RGB"),
@@ -347,8 +346,8 @@ class PowerPaintController:
                 promptA=promptA,
                 promptB=promptB,
                 promptU=prompt,
-                tradoff=fitting_degree,
-                tradoff_nag=fitting_degree,
+                tradeoff=fitting_degree,
+                tradeoff_nag=fitting_degree,
                 image=input_image["image"].convert("RGB"),
                 mask=input_image["mask"].convert("RGB"),
                 num_inference_steps=ddim_steps,
@@ -443,8 +442,8 @@ class PowerPaintController:
         result = self.control_pipe(
             promptA=promptB,
             promptB=promptA,
-            tradoff=1.0,
-            tradoff_nag=1.0,
+            tradeoff=1.0,
+            tradeoff_nag=1.0,
             negative_promptA=negative_promptA,
             negative_promptB=negative_promptB,
             image=input_image["image"].convert("RGB"),

@@ -61,7 +61,7 @@ default_placeholder: false # set as true to avoid find unused_parameters
 
 # training hyper-parameters
 learning_rate: 1e-5
-max_train_steps: 200e3            # max training steps
+max_train_steps: 25e3            # max training steps
 train_batch_size: 64              # batch size per GPU
 dataloader_num_workers: 4
 gradient_accumulation_steps: 2
@@ -69,12 +69,12 @@ gradient_accumulation_steps: 2
 gradient_checkpointing: true
 resume_from_checkpoint: "latest"
 
-max_grad_norm: 1
-lr_scheduler constant_with_warmup: true
+lr_scheduler: "constant_with_warmup"
 lr_warmup_steps: 2000
 
-checkpointing_steps: 10 #2e3
-validation_steps: 10 #1e3
+checkpointing_steps: 2e3
+validation_steps: 1e3
+checkpoints_total_limit: 10
 
 
 # validation data
@@ -99,7 +99,7 @@ validation_data:
         - task: "object_removal" # context-guided object remove
           promptA: ${task_prompt.context_inpainting.placeholder_tokens}
           promptB: ${task_prompt.context_inpainting.placeholder_tokens}
-          promptU: "high-quality, backgrounds"
+          promptU: "high-quality"
           tradeoff: 1
           negative_promptA: ${task_prompt.object_inpainting.placeholder_tokens}
           negative_promptB: ${task_prompt.object_inpainting.placeholder_tokens}

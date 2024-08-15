@@ -58,12 +58,13 @@ default_placeholder: true # set as true to avoid find unused_parameters
 
 # training hyper-parameters
 learning_rate: 1e-5
-train_batch_size: 6              # batch size per GPU
 max_train_steps: 300e3           # max training steps
+train_batch_size: 6              # batch size per GPU
+dataloader_num_workers: 4
 
-checkpointing_steps: 10 #2000
-validation_steps: 10 #1000
-
+checkpointing_steps: 2e3
+validation_steps: 1e3
+checkpoints_total_limit: 10
 
 resume_from_checkpoint: "latest"
 

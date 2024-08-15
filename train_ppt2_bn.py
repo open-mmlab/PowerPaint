@@ -125,11 +125,16 @@ def log_validation(vae, text_encoder, tokenizer, unet, brushnet, args, accelerat
     # load validation images
     image_logs = []
     for case in args.validation_data.cases:
+        validation_prompts = case.prompt
         validation_image = Image.open(os.path.join(args.validation_data.data_root, case.image)).convert("RGB")
         validation_mask = Image.open(os.path.join(args.validation_data.data_root, case.mask)).convert("L")
-        validation_prompts = case.prompt
+        validation_image = Image.composite(
+            Image.new("RGB", (validation_image.size[0], validation_image.size[1]), (0, 0, 0)),
+            validation_image,
+            validation_mask.convert("L"),
+        )
 
-        for p in range(validation_prompts):
+        for p in validation_prompts:
             with torch.autocast(accelerator.device.type):
                 image = pipeline(
                     promptA=p.promptA,
@@ -143,7 +148,7 @@ def log_validation(vae, text_encoder, tokenizer, unet, brushnet, args, accelerat
                     mask=validation_mask,
                     num_inference_steps=20,
                 ).images[0]
-                image.save(f"{str(step).zfill(3)}_{p.task}.png")
+                image.save(os.path.join(args.output_dir, f"{str(step).zfill(3)}_{p.task}.png"))
             image_logs.append(image)
 
     for tracker in accelerator.trackers:
@@ -704,6 +709,7 @@ def main(args):
 
         # Resize the token embeddings as we are adding new special tokens to the tokenizer
         text_encoder.resize_token_embeddings(len(tokenizer))
+        logger.info(f"Added {len(added_placeholder_tokens)} placeholder tokens for task {name}")
 
         # Initialise the newly added placeholder token with the embeddings of the initializer token
         token_embeds = text_encoder.get_input_embeddings().weight.data
@@ -863,7 +869,7 @@ def main(args):
     image_logs = None
     for _ in range(first_epoch, args.num_train_epochs):
         train_loss = 0.0
-        for step, batch in enumerate(train_dataloader):
+        for batch in train_dataloader:
             with accelerator.accumulate(brushnet):
                 # Convert images to latent space
                 latents = vae.encode(batch["pixel_values"].to(dtype=weight_dtype)).latent_dist.sample().detach()
@@ -1001,7 +1007,7 @@ def main(args):
                         accelerator.save_state(save_path)
                         logger.info(f"Saved state to {save_path}")
 
-                    if args.validation_data is not None and global_step % args.validation_steps == 0:
+                    if hasattr(args, "validation_data") and global_step % args.validation_steps == 0:
                         image_logs = log_validation(
                             vae,
                             text_encoder,
@@ -1028,18 +1034,17 @@ def main(args):
 
         # Run a final round of validation.
         image_logs = None
-        if args.validation_data is not None:
+        if hasattr(args, "validation_data"):
             image_logs = log_validation(
-                vae=vae,
-                text_encoder=text_encoder,
-                tokenizer=tokenizer,
-                unet=unet,
-                brushnet=None,
-                args=args,
-                accelerator=accelerator,
-                weight_dtype=weight_dtype,
-                step=global_step,
-                is_final_validation=True,
+                vae,
+                text_encoder,
+                tokenizer,
+                unet,
+                brushnet,
+                args,
+                accelerator,
+                weight_dtype,
+                global_step,
             )
 
         if args.push_to_hub:
