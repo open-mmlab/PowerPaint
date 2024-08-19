@@ -100,14 +100,13 @@ def log_validation(vae, text_encoder, tokenizer, unet, brushnet, args, accelerat
     logger.info("Running validation... ")
 
     # load the pipeline
-    brushnet = accelerator.unwrap_model(brushnet)
     pipeline = StableDiffusionPowerPaintBrushNetPipeline.from_pretrained(
         args.pretrained_model_name_or_path,
         vae=vae,
-        text_encoder=text_encoder,
+        text_encoder=accelerator.unwrap_model(text_encoder),
         tokenizer=tokenizer,
         unet=unet,
-        brushnet=brushnet,
+        brushnet=accelerator.unwrap_model(brushnet),
         safety_checker=None,
         revision=args.revision,
         variant=args.variant,
@@ -134,7 +133,13 @@ def log_validation(vae, text_encoder, tokenizer, unet, brushnet, args, accelerat
             validation_mask.convert("L"),
         )
 
-        for p in validation_prompts:
+        image_grid = Image.new(
+            "RGB",
+            (validation_image.size[0] * (1 + len(validation_prompts)), validation_image.size[1]),
+            (255, 255, 255),
+        )
+        image_grid.paste(validation_image, (0, 0))
+        for i, p in enumerate(validation_prompts):
             with torch.autocast(accelerator.device.type):
                 image = pipeline(
                     promptA=p.promptA,
@@ -148,8 +153,11 @@ def log_validation(vae, text_encoder, tokenizer, unet, brushnet, args, accelerat
                     mask=validation_mask,
                     num_inference_steps=20,
                 ).images[0]
-                image.save(os.path.join(args.output_dir, f"{str(step).zfill(3)}_{p.task}.png"))
             image_logs.append(image)
+            image_grid.paste(image, (validation_image.size[0] * (i + 1), 0))
+        image_grid.save(os.path.join(args.output_dir, f"{str(step).zfill(3)}_{os.path.basename(case.image)}"))
+    gc.collect()
+    torch.cuda.empty_cache()
 
     for tracker in accelerator.trackers:
         if tracker.name == "tensorboard":
@@ -627,10 +635,6 @@ def main(args):
         accelerator.register_save_state_pre_hook(save_model_hook)
         accelerator.register_load_state_pre_hook(load_model_hook)
 
-    vae.requires_grad_(False)
-    unet.requires_grad_(False)
-    brushnet.train()
-
     if args.gradient_checkpointing:
         brushnet.enable_gradient_checkpointing()
 
@@ -717,12 +721,12 @@ def main(args):
             for token_id in placeholder_token_ids:
                 token_embeds[token_id] = token_embeds[initializer_token_id].clone()
 
+    vae.requires_grad_(False)
+    unet.requires_grad_(False)
     # Freeze all parameters except for the token embeddings in text encoder
-    text_encoder.requires_grad_(False)
     text_encoder.text_model.encoder.requires_grad_(False)
     text_encoder.text_model.final_layer_norm.requires_grad_(False)
     text_encoder.text_model.embeddings.position_embedding.requires_grad_(False)
-    text_encoder.train()
 
     # 1. trainable embedding + 2. trainable model (brushnet)
     optimizer = optimizer_class(
@@ -780,6 +784,8 @@ def main(args):
         power=args.lr_power,
     )
 
+    brushnet.train()
+    text_encoder.train()
     # Prepare everything with our `accelerator`.
     brushnet, text_encoder, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
         brushnet, text_encoder, optimizer, train_dataloader, lr_scheduler
@@ -881,7 +887,9 @@ def main(args):
                 mask_image_latents = vae.encode(mask_image.to(weight_dtype)).latent_dist.sample()
                 mask_image_latents = (mask_image_latents * vae.config.scaling_factor).to(weight_dtype)
 
-                conditioning_latents = torch.concat([mask_image_latents, 1 - mask], 1)
+                # we use the opposite 0/1 values for mask as the original brushnet
+                # conditioning_latents = torch.concat([mask_image_latents, 1 - mask], 1)
+                conditioning_latents = torch.concat([mask, mask_image_latents], 1)
 
                 # Sample noise that we'll add to the latents
                 noise = torch.randn_like(latents)
@@ -967,7 +975,8 @@ def main(args):
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(
-                        list(brushnet.parameters()) + list(text_encoder.get_input_embeddings().parameters()),
+                        list(brushnet.parameters())
+                        + list(accelerator.unwrap_model(text_encoder).get_input_embeddings().parameters()),
                         args.max_grad_norm,
                     )
                 optimizer.step()

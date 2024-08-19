@@ -1166,7 +1166,7 @@ class StableDiffusionPowerPaintBrushNetPipeline(
                 do_classifier_free_guidance=self.do_classifier_free_guidance,
                 guess_mode=guess_mode,
             )
-            original_mask = (original_mask.sum(1)[:, None, :, :] < 0).to(image.dtype)
+            original_mask = (original_mask.sum(1)[:, None, :, :] > 0).to(image.dtype)
             height, width = image.shape[-2:]
         else:
             assert False
@@ -1196,7 +1196,9 @@ class StableDiffusionPowerPaintBrushNetPipeline(
         mask = torch.nn.functional.interpolate(
             original_mask, size=(conditioning_latents.shape[-2], conditioning_latents.shape[-1])
         )
-        conditioning_latents = torch.concat([conditioning_latents, mask], 1)
+        # conditioning_latents = torch.concat([conditioning_latents, mask], 1)
+        # we use different concatenation order for BrushNet
+        conditioning_latents = torch.concat([mask, conditioning_latents], 1)
 
         # 6.5 Optionally get Guidance Scale Embedding
         timestep_cond = None

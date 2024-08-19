@@ -30,7 +30,6 @@ import torch.utils.checkpoint
 import transformers
 from accelerate import Accelerator
 from accelerate.logging import get_logger
-from accelerate.state import AcceleratorState
 from accelerate.utils import ProjectConfiguration, set_seed
 from huggingface_hub import create_repo, upload_folder
 from omegaconf import OmegaConf
@@ -42,7 +41,7 @@ from transformers import CLIPTokenizer, PretrainedConfig
 
 import diffusers
 import powerpaint.datasets
-from diffusers import AutoencoderKL, DDPMScheduler, UNet2DConditionModel
+from diffusers import AutoencoderKL, DDPMScheduler
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import EMAModel, compute_snr
 from diffusers.utils import check_min_version, deprecate, is_wandb_available
@@ -50,6 +49,7 @@ from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_
 from diffusers.utils.import_utils import is_xformers_available
 from diffusers.utils.torch_utils import is_compiled_module
 from powerpaint.datasets import ProbPickingDataset
+from powerpaint.models import UNet2DConditionModel
 from powerpaint.pipelines import StableDiffusionInpaintPipeline
 
 
@@ -140,13 +140,12 @@ More information on all the CLI arguments and the environment are available on y
 def log_validation(vae, text_encoder, tokenizer, unet, args, accelerator, weight_dtype, step):
     logger.info("Running validation... ")
 
-    unet = accelerator.unwrap_model(unet)
     pipeline = StableDiffusionInpaintPipeline.from_pretrained(
         args.pretrained_model_name_or_path,
         vae=vae,
-        text_encoder=text_encoder,
+        text_encoder=accelerator.unwrap_model(text_encoder),
         tokenizer=tokenizer,
-        unet=unet,
+        unet=accelerator.unwrap_model(unet),
         safety_checker=None,
         revision=args.revision,
         variant=args.variant,
@@ -170,8 +169,13 @@ def log_validation(vae, text_encoder, tokenizer, unet, args, accelerator, weight
             validation_image,
             validation_mask.convert("L"),
         )
-
-        for p in validation_prompts:
+        image_grid = Image.new(
+            "RGB",
+            (validation_image.size[0] * (1 + len(validation_prompts)), validation_image.size[1]),
+            (255, 255, 255),
+        )
+        image_grid.paste(validation_image, (0, 0))
+        for i, p in enumerate(validation_prompts):
             with torch.autocast(accelerator.device.type):
                 image = pipeline(
                     promptA=p.promptA,
@@ -183,10 +187,11 @@ def log_validation(vae, text_encoder, tokenizer, unet, args, accelerator, weight
                     mask=validation_mask,
                     num_inference_steps=20,
                 ).images[0]
-                image.save(os.path.join(args.output_dir, f"{str(step).zfill(3)}_{p.task}.png"))
             image_logs.append(image)
-        gc.collect()
-        torch.cuda.empty_cache()
+            image_grid.paste(image, (validation_image.size[0] * (i + 1), 0))
+        image_grid.save(os.path.join(args.output_dir, f"{str(step).zfill(3)}_{os.path.basename(case.image)}"))
+    gc.collect()
+    torch.cuda.empty_cache()
 
     for tracker in accelerator.trackers:
         if tracker.name == "tensorboard":
@@ -610,17 +615,6 @@ def main():
 
     # import correct text encoder class
     text_encoder_cls = import_model_class_from_model_name_or_path(args.pretrained_model_name_or_path, args.revision)
-
-    def deepspeed_zero_init_disabled_context_manager():
-        """
-        returns either a context list that includes one that will disable zero.Init or an empty context list
-        """
-        deepspeed_plugin = AcceleratorState().deepspeed_plugin if accelerate.state.is_initialized() else None
-        if deepspeed_plugin is None:
-            return []
-
-        return [deepspeed_plugin.zero3_init_context_manager(enable=False)]
-
     text_encoder = text_encoder_cls.from_pretrained(
         args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision
     )
@@ -666,16 +660,6 @@ def main():
             for token_id in placeholder_token_ids:
                 token_embeds[token_id] = token_embeds[initializer_token_id].clone()
 
-    # Freeze all parameters except for the token embeddings in text encoder
-    text_encoder.requires_grad_(False)
-    text_encoder.text_model.encoder.requires_grad_(False)
-    text_encoder.text_model.final_layer_norm.requires_grad_(False)
-    text_encoder.text_model.embeddings.position_embedding.requires_grad_(False)
-    text_encoder.train()
-
-    # extend unet to with five more channels in conv_in
-    unet = UNet2DConditionModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="unet")
-
     def extend_unet(unet_model, conv_in_channels):
         old_weights, old_bias = unet_model.conv_in.weight, unet_model.conv_in.bias
         new_conv1 = nn.Conv2d(
@@ -691,15 +675,18 @@ def main():
         if old_bias is not None:
             new_conv1.bias = old_bias
         unet_model.conv_in = new_conv1
-        unet_model.config["in_channels"] = conv_in_channels
+        unet_model.config.in_channels = conv_in_channels
         return unet_model
 
+    # extend unet to with five more channels in conv_in
+    unet = UNet2DConditionModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="unet")
     unet = extend_unet(unet, 9)
 
-    # Freeze vae and text_encoder
     vae.requires_grad_(False)
-    text_encoder.requires_grad_(False)
-    unet.train()
+    # Freeze all parameters except for the token embeddings in text encoder
+    text_encoder.text_model.encoder.requires_grad_(False)
+    text_encoder.text_model.final_layer_norm.requires_grad_(False)
+    text_encoder.text_model.embeddings.position_embedding.requires_grad_(False)
 
     # Create EMA for the unet.
     if args.use_ema:
@@ -750,7 +737,7 @@ def main():
                     model.config = load_model.config
                 else:
                     # load diffusers style into model
-                    load_model = UNet2DConditionModel.from_pretrained(input_dir, subfolder="unet")
+                    load_model = UNet2DConditionModel.from_pretrained(input_dir, in_channels=9, subfolder="unet")
                     model.register_to_config(**load_model.config)
 
                 model.load_state_dict(load_model.state_dict())
@@ -760,6 +747,8 @@ def main():
         accelerator.register_load_state_pre_hook(load_model_hook)
 
     if args.gradient_checkpointing:
+        unet.train()
+        text_encoder.gradient_checkpointing_enable()
         unet.enable_gradient_checkpointing()
 
     # Enable TF32 for faster training on Ampere GPUs,
@@ -837,6 +826,7 @@ def main():
         num_training_steps=args.max_train_steps * args.gradient_accumulation_steps,
     )
 
+    text_encoder.train()
     # Prepare everything with our `accelerator`.
     unet, optimizer, train_dataloader, lr_scheduler, text_encoder = accelerator.prepare(
         unet, optimizer, train_dataloader, lr_scheduler, text_encoder
@@ -853,7 +843,7 @@ def main():
         args.mixed_precision = accelerator.mixed_precision
 
     # Move text_encode and vae to gpu and cast to weight_dtype
-    text_encoder.to(accelerator.device, dtype=weight_dtype)
+    text_encoder.to(accelerator.device)
     vae.to(accelerator.device, dtype=weight_dtype)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
@@ -1009,10 +999,10 @@ def main():
                 # Backpropagate
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
-                    accelerator.clip_grad_norm_(
-                        list(unet.parameters()) + list(text_encoder.get_input_embeddings().parameters()),
-                        args.max_grad_norm,
+                    params_to_clip = list(unet.parameters()) + list(
+                        accelerator.unwrap_model(text_encoder).get_input_embeddings().parameters()
                     )
+                    accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
