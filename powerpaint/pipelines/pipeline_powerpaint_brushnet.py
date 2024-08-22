@@ -230,15 +230,14 @@ class StableDiffusionPowerPaintBrushNetPipeline(
         self,
         promptA,
         promptB,
-        promptU,
+        prompt,
         t,
         device,
         num_images_per_prompt,
         do_classifier_free_guidance,
         negative_promptA=None,
         negative_promptB=None,
-        negative_promptU=None,
-        t_nag=None,
+        negative_prompt=None,
         prompt_embeds: Optional[torch.FloatTensor] = None,
         negative_prompt_embeds: Optional[torch.FloatTensor] = None,
         lora_scale: Optional[float] = None,
@@ -292,7 +291,6 @@ class StableDiffusionPowerPaintBrushNetPipeline(
             if isinstance(self, TextualInversionLoaderMixin):
                 promptA = self.maybe_convert_prompt(promptA, self.tokenizer)
                 promptB = self.maybe_convert_prompt(promptB, self.tokenizer)
-                promptU = self.maybe_convert_prompt(promptU, self.tokenizer)
 
             text_inputsA = self.tokenizer(
                 promptA,
@@ -309,7 +307,7 @@ class StableDiffusionPowerPaintBrushNetPipeline(
                 return_tensors="pt",
             )
             text_inputsU = self.tokenizer(
-                promptU,
+                prompt,
                 padding="max_length",
                 max_length=self.tokenizer.model_max_length,
                 truncation=True,
@@ -358,7 +356,7 @@ class StableDiffusionPowerPaintBrushNetPipeline(
 
             prompt_embedsA = self.text_encoder(text_input_idsA.to(device), attention_mask=attention_mask)[0]
             prompt_embedsB = self.text_encoder(text_input_idsB.to(device), attention_mask=attention_mask)[0]
-            prompt_embeds = prompt_embedsA * (t) + (1 - t) * prompt_embedsB
+            prompt_embeds = t * prompt_embedsA + (1 - t) * prompt_embedsB
 
         if self.text_encoder is not None:
             prompt_embeds_dtype = self.text_encoder.dtype
@@ -404,29 +402,28 @@ class StableDiffusionPowerPaintBrushNetPipeline(
                 uncond_tokensA = negative_promptA
                 uncond_tokensB = negative_promptB
 
-            if negative_promptU is None:
+            if negative_prompt is None:
                 uncond_tokensU = [""] * batch_size
-            elif promptU is not None and type(promptU) is not type(negative_promptU):
+            elif prompt is not None and type(prompt) is not type(negative_prompt):
                 raise TypeError(
-                    f"`negative_prompt` should be the same type to `prompt`, but got {type(negative_promptU)} !="
-                    f" {type(promptU)}."
+                    f"`negative_prompt` should be the same type to `prompt`, but got {type(negative_prompt)} !="
+                    f" {type(prompt)}."
                 )
-            elif isinstance(negative_promptU, str):
-                uncond_tokensU = [negative_promptU]
-            elif batch_size != len(negative_promptU):
+            elif isinstance(negative_prompt, str):
+                uncond_tokensU = [negative_prompt]
+            elif batch_size != len(negative_prompt):
                 raise ValueError(
-                    f"`negative_prompt`: {negative_promptU} has batch size {len(negative_promptU)}, but `prompt`:"
-                    f" {promptU} has batch size {batch_size}. Please make sure that passed `negative_prompt` matches"
+                    f"`negative_prompt`: {negative_prompt} has batch size {len(negative_prompt)}, but `prompt`:"
+                    f" {prompt} has batch size {batch_size}. Please make sure that passed `negative_prompt` matches"
                     " the batch size of `prompt`."
                 )
             else:
-                uncond_tokensU = negative_promptU
+                uncond_tokensU = negative_prompt
 
             # textual inversion: procecss multi-vector tokens if necessary
             if isinstance(self, TextualInversionLoaderMixin):
                 uncond_tokensA = self.maybe_convert_prompt(uncond_tokensA, self.tokenizer)
                 uncond_tokensB = self.maybe_convert_prompt(uncond_tokensB, self.tokenizer)
-                uncond_tokensU = self.maybe_convert_prompt(uncond_tokensU, self.tokenizer)
 
             max_length = prompt_embeds.shape[1]
             uncond_inputA = self.tokenizer(
@@ -480,7 +477,7 @@ class StableDiffusionPowerPaintBrushNetPipeline(
             negative_prompt_embedsB = self.text_encoder(
                 uncond_inputB.input_ids.to(device), attention_mask=attention_mask
             )[0]
-            negative_prompt_embeds = negative_prompt_embedsA * (t_nag) + (1 - t_nag) * negative_prompt_embedsB
+            negative_prompt_embeds = t * negative_prompt_embedsA + (1 - t) * negative_prompt_embedsB
 
         if do_classifier_free_guidance:
             # duplicate unconditional embeddings for each generation per prompt, using mps friendly method
@@ -499,9 +496,9 @@ class StableDiffusionPowerPaintBrushNetPipeline(
             negative_prompt_embedsU = negative_prompt_embedsU.repeat(1, num_images_per_prompt, 1)
             negative_prompt_embedsU = negative_prompt_embedsU.view(batch_size * num_images_per_prompt, seq_len, -1)
 
-            negative_prompt_embedsU = torch.cat([negative_prompt_embedsU, prompt_embedsU])
+            prompt_embedsU = torch.cat([negative_prompt_embedsU, prompt_embedsU])
 
-        return prompt_embeds, negative_prompt_embedsU
+        return prompt_embeds, prompt_embedsU
 
     # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.encode_image
     def encode_image(self, image, device, num_images_per_prompt, output_hidden_states=None):
@@ -902,9 +899,8 @@ class StableDiffusionPowerPaintBrushNetPipeline(
         self,
         promptA: Union[str, List[str]] = None,
         promptB: Union[str, List[str]] = None,
-        promptU: Union[str, List[str]] = None,
+        prompt: Union[str, List[str]] = None,
         tradeoff: float = 1.0,
-        tradeoff_nag: float = 1.0,
         image: PipelineImageInput = None,
         mask: PipelineImageInput = None,
         height: Optional[int] = None,
@@ -914,7 +910,7 @@ class StableDiffusionPowerPaintBrushNetPipeline(
         guidance_scale: float = 7.5,
         negative_promptA: Optional[Union[str, List[str]]] = None,
         negative_promptB: Optional[Union[str, List[str]]] = None,
-        negative_promptU: Optional[Union[str, List[str]]] = None,
+        negative_prompt: Optional[Union[str, List[str]]] = None,
         num_images_per_prompt: Optional[int] = 1,
         eta: float = 0.0,
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
@@ -1125,15 +1121,14 @@ class StableDiffusionPowerPaintBrushNetPipeline(
         prompt_embeds, prompt_embedsU = self.encode_prompt(
             promptA,
             promptB,
-            promptU,
+            prompt,
             tradeoff,
             device,
             num_images_per_prompt,
             self.do_classifier_free_guidance,
             negative_promptA,
             negative_promptB,
-            negative_promptU,
-            tradeoff_nag,
+            negative_prompt,
             prompt_embeds=prompt_embeds,
             negative_prompt_embeds=negative_prompt_embeds,
             lora_scale=text_encoder_lora_scale,

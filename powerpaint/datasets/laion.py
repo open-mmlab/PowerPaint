@@ -170,9 +170,8 @@ class LaionIterJsonDataset(IterableDataset):
 
         alpha = torch.tensor((1.0, 0.0))
         output["tradeoff"] = alpha
-        output["task"] = data_info["task_type"]
 
-        # tokenization, remember to convert prompt for multi-vector embeddings
+        # IMPORTANT, remember to convert prompt for multi-vector embeddings
         promptA = self.pipeline.maybe_convert_prompt(data_info["promptA"], self.pipeline.tokenizer)
         promptB = self.pipeline.maybe_convert_prompt(data_info["promptB"], self.pipeline.tokenizer)
         prompt = self.pipeline.maybe_convert_prompt(data_info["prompt"], self.pipeline.tokenizer)

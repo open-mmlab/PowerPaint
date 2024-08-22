@@ -235,9 +235,8 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
             return None
 
         output["tradeoff"] = alpha
-        output["task"] = data_info["task_type"]
 
-        # tokenization, remember to convert prompt for multi-vector embeddings
+        # IMPORTANT, remember to convert prompt for multi-vector embeddings
         promptA = self.pipeline.maybe_convert_prompt(data_info["promptA"], self.pipeline.tokenizer)
         promptB = self.pipeline.maybe_convert_prompt(data_info["promptB"], self.pipeline.tokenizer)
         prompt = self.pipeline.maybe_convert_prompt(data_info["prompt"], self.pipeline.tokenizer)
@@ -266,14 +265,15 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
                 task_type = "object_inpainting"
                 promptA = self.task_prompt.object_inpainting.placeholder_tokens
                 promptB = self.task_prompt.object_inpainting.placeholder_tokens
-                # let see: obj + NULL
-                if random.random() < 0.3:
-                    prompt = ""
             else:
                 # using exact object segmentation mask for shape-guided inpainting
                 task_type = "shape_inpainting"
                 promptA = self.task_prompt.shape_inpainting.placeholder_tokens
                 promptB = self.task_prompt.context_inpainting.placeholder_tokens
+
+            # let see: NULL + obj or shape
+            if random.random() < 0.3:
+                prompt = ""
 
             if self.desc_prefix and prompt != "":  # for unet-based models
                 promptA, promptB = f"{promptA} {prompt}", f"{promptB} {prompt}"

@@ -35,7 +35,7 @@ from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_
 from diffusers.utils.import_utils import is_xformers_available
 from diffusers.utils.torch_utils import is_compiled_module
 from powerpaint.datasets import ProbPickingDataset
-from powerpaint.models import BrushNetModel
+from powerpaint.models import BrushNetModel, UNet2DConditionModel
 from powerpaint.pipelines import StableDiffusionPowerPaintBrushNetPipeline
 
 
@@ -90,14 +90,17 @@ These are PowerPaint weights trained on {base_model} with new type of conditioni
     model_card.save(os.path.join(repo_folder, "README.md"))
 
 
-def log_validation(text_encoder, tokenizer, brushnet, args, accelerator, weight_dtype, step):
+def log_validation(tokenizer, text_encoder, brushnet, args, accelerator, weight_dtype, step):
     logger.info("Running validation... ")
 
-    # use fixed model from pretrained models
+    # use fixed model from pretrained models, and text_encoder and tokenizer from trainer
     pipe = StableDiffusionPowerPaintBrushNetPipeline.from_pretrained(
         args.pretrained_model_name_or_path,
-        text_encoder=accelerator.unwrap_model(text_encoder),
+        unet=UNet2DConditionModel.from_pretrained(
+            args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision, variant=args.variant
+        ),
         tokenizer=tokenizer,
+        text_encoder=accelerator.unwrap_model(text_encoder),
         brushnet=accelerator.unwrap_model(brushnet),
         safety_checker=None,
         revision=args.revision,
@@ -130,18 +133,20 @@ def log_validation(text_encoder, tokenizer, brushnet, args, accelerator, weight_
             (255, 255, 255),
         )
         image_grid.paste(validation_image, (0, 0))
+        t2i_mask = Image.new("RGB", (validation_image.size[0], validation_image.size[1]), (255, 255, 255)).convert("L")
+        t2i_image = Image.new("RGB", (validation_image.size[0], validation_image.size[1]), (0, 0, 0))
         for i, p in enumerate(validation_prompts):
             with torch.autocast(accelerator.device.type):
                 image = pipe(
                     promptA=p.promptA,
                     promptB=p.promptB,
-                    promptU=p.promptU,
+                    prompt=p.prompt,
                     tradeoff=p.tradeoff,
-                    negative_promptA=p.get("negative_promptA", None),
-                    negative_promptB=p.get("negative_promptB", None),
-                    negative_promptU=p.get("negative_promptU", None),
-                    image=validation_image,
-                    mask=validation_mask,
+                    negative_promptA=p.negative_promptA,
+                    negative_promptB=p.negative_promptB,
+                    negative_prompt=p.negative_prompt,
+                    image=validation_image if p.task != "t2i" else t2i_image,
+                    mask=validation_mask if p.task != "t2i" else t2i_mask,
                     num_inference_steps=20,
                 ).images[0]
             image_logs.append(image)
@@ -166,7 +171,7 @@ def log_validation(text_encoder, tokenizer, brushnet, args, accelerator, weight_
         else:
             logger.warning(f"image logging not implemented for {tracker.name}")
 
-    # del pipeline
+    del pipe
     gc.collect()
     torch.cuda.empty_cache()
 
@@ -567,6 +572,9 @@ def main(args):
     # initialize from pre-trained pipeline
     pipe = StableDiffusionPowerPaintBrushNetPipeline.from_pretrained(
         args.pretrained_model_name_or_path,
+        unet=UNet2DConditionModel.from_pretrained(
+            args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision, variant=args.variant
+        ),
         safety_checker=None,
         revision=args.revision,
         variant=args.variant,
@@ -584,15 +592,14 @@ def main(args):
         model = model._orig_mod if is_compiled_module(model) else model
         return model
 
-    # add learnable tokens for task prompts into tokenizer
-    pipe.add_tokens(
-        placeholder_tokens=[t.placeholder_tokens for t in args.task_prompt],
-        initializer_token=[t.initializer_token for t in args.task_prompt],
-        num_vectors_per_token=[t.num_vectors_per_token for t in args.task_prompt],
-    )
+    # IMPORTANT: add learnable tokens for task prompts into tokenizer
+    placeholder_tokens = [v.placeholder_tokens for k, v in args.task_prompt.items()]
+    initializer_token = [v.initializer_token for k, v in args.task_prompt.items()]
+    num_vectors_per_token = [v.num_vectors_per_token for k, v in args.task_prompt.items()]
+    pipe.add_tokens(placeholder_tokens, initializer_token, num_vectors_per_token)
 
     vae, tokenizer, unet, noise_scheduler = pipe.vae, pipe.tokenizer, pipe.unet, pipe.scheduler
-    text_encoder, brushnet = pipe.text_encoder, pipe.brushnet
+    text_encoder, brushnet = pipe.text_encoder.to(torch.float32), pipe.brushnet.to(torch.float32)
     text_encoder_cls = import_model_class_from_model_name_or_path(args.pretrained_model_name_or_path, args.revision)
 
     # `accelerate` 0.16.0 will have better support for customized saving
@@ -959,10 +966,8 @@ def main(args):
 
                     if hasattr(args, "validation_data") and global_step % args.validation_steps == 0:
                         image_logs = log_validation(
-                            vae,
-                            text_encoder,
                             tokenizer,
-                            unet,
+                            text_encoder,
                             brushnet,
                             args,
                             accelerator,
@@ -986,10 +991,8 @@ def main(args):
         image_logs = None
         if hasattr(args, "validation_data"):
             image_logs = log_validation(
-                vae,
-                text_encoder,
                 tokenizer,
-                unet,
+                text_encoder,
                 brushnet,
                 args,
                 accelerator,

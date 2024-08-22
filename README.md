@@ -166,9 +166,9 @@ Basically, we recommend to use 0.5-0.6 for fitting degree when you want to gener
 
 2. Start training. We suggest using PowerPaint-V2 version, which is built upon BrushNet and requires smaller batch size for training. You can train it with the following command,
 ```shell
-accelerate launch --config_file configs/acc.yaml train_ppt_brushnet.py --config configs/pptv2_bn.yaml
+accelerate launch --config_file configs/acc.yaml train_ppt2_bn.py --config configs/ppt2_bn.yaml
 ```
-where `configs/acc.yaml` is the configuration file for using accelerate, and `configs/pptv2_bn.yaml` is the configuration file for training PowerPaint-V2.
+where `configs/acc.yaml` is the configuration file for using accelerate, and `configs/ppt2_bn.yaml` is the configuration file for training PowerPaint-V2.
 
 
 PowerPaint-V1 version often requires much larger training batch size to converge (e.g., 1024). You can train it with the following command,
