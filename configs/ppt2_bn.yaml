@@ -42,7 +42,7 @@ train_data:
     - name: "openimages"
       prob: 0.6 # the probability of presence during training
       dataset_class: "OpenImageBLIPaug_Dataset"
-      desc_prefix: false #set description in front of task prompt
+      desc_prefix: false # set description in front of task prompt
 
       # you may need to change the path to your own path
       image_root: "openmmlab:s3://openmmlab/datasets/detection/OpenImages/OpenImages/train/"
@@ -87,6 +87,12 @@ validation_data:
           promptB: ${task_prompt.context_inpainting.placeholder_tokens}
           promptU: "A cake on the table"
           tradeoff: 0.9
+
+        - task: "context inpainting" # text-free context inpainting
+          promptA: ${task_prompt.context_inpainting.placeholder_tokens}
+          promptB: ${task_prompt.context_inpainting.placeholder_tokens}
+          promptU: "high-quality"
+          tradeoff: 1
 
         - task: "object_removal" # context-guided object remove
           promptA: ${task_prompt.context_inpainting.placeholder_tokens}

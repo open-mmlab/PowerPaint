@@ -1,6 +1,5 @@
 import os
 import random
-import time
 
 import cv2
 import numpy as np
@@ -11,10 +10,11 @@ from PIL import Image
 from torch.utils.data import IterableDataset
 from torchvision import transforms
 
-from .utils import INVALID_OPEN_FLAG, save_log
-
 
 logger = get_logger(__name__)
+
+INVALID_OPEN_FLAG = "a 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911 1911"
+
 
 try:
     from petrel_client.client import Client
@@ -35,8 +35,7 @@ class RandomCrop(object):
 
 
 def augment_images(image, mask, resolution):
-    mask[mask > 128] = 255
-    mask[mask <= 128] = 0
+    _, mask = cv2.threshold(mask, 0, 255, cv2.THRESH_BINARY)
     mask = Image.fromarray(mask.astype("uint8")).convert("L")
 
     resize = transforms.Resize((resolution))
@@ -117,7 +116,7 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
     def __init__(
         self,
         transforms,
-        data_tokenizer,
+        pipeline,
         task_prompt,
         desc_prefix=False,
         name=None,
@@ -158,7 +157,7 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
         self.resolution = resolution
         self.epoch = -1
         self.deterministic = deterministic
-        self.tokenizer = data_tokenizer
+        self.pipeline = pipeline
         self.task_prompt = task_prompt
         self.desc_prefix = desc_prefix
 
@@ -168,8 +167,7 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
         self.transforms = transforms
 
     def _sample_data(self, data_info):
-        # load mask
-        mask = Image.open(data_info["mask"]).convert("L")
+        output = {}
 
         # load images
         img_bytes = self.client.get(data_info["img_path"])
@@ -183,42 +181,70 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
         if w < 512 or h < 512:
             return None
 
-        output = {}
-        mask = mask.resize((w, h), Image.LANCZOS)
+        # load mask
+        mask = Image.open(data_info["mask"]).convert("L")
+        mask = mask.resize((w, h), Image.NEAREST)  # (0,255)
         mask = np.array(mask).astype(np.float32)
         if len(mask.shape) == 3:
             mask = mask[:, :, 0]
 
-        # dilate masks
-        S_mask = len(np.nonzero(mask)[0])
-        if S_mask == 0:
-            aug_mask = mask
-            alpha = torch.tensor((1.0, 0.0))
+        object_size = mask.sum() / 255.0
+        # filter out images without object
+        if object_size == 0:
+            return None
+
+        # dilate the mask
         else:
             # using bounding box (with micro-aug) for object inpainting
-            if data_info["promptA"] == data_info["promptB"]:
+            mask = cv2.dilate(mask, np.ones((3, 3), np.uint8), iterations=1)
+            if data_info["task_type"] == "object_inpainting":
                 aug_mask = get_min_bounding_box(mask, pp=2)
                 if random.random() > 0.5:
                     aug_mask = random_warponly(
-                        aug_mask, sigma=20 / 200 * (S_mask ** (0.5)), patch=max(60 / 200 * (S_mask ** (0.5)), 4)
+                        aug_mask,
+                        sigma=20 / 200 * (object_size ** (0.5)),
+                        patch=max(60 / 200 * (object_size ** (0.5)), 4),
                     )
                 alpha = torch.tensor((1.0, 0.0))
 
             # using exact object segmentation mask for shape-guided inpainting
+            elif data_info["task_type"] == "shape_inpainting":
+                # improve original mask
+                mask = cv2.dilate(mask, np.ones((3, 3), np.uint8), iterations=2)
+                object_size = mask.sum() / 255.0
+
+                # shape-guided dilation
+                ksize = random.choice([ks for ks in range(3, 25) if ks % 2 == 1])
+                iters = random.choice(range(0, 10))
+                kernel = np.ones((ksize, ksize), np.uint8)
+                aug_mask = cv2.dilate(mask, kernel, iters)
+                _, aug_mask = cv2.threshold(aug_mask, 0, 255, cv2.THRESH_BINARY)
+
+                mask_size = aug_mask.sum() / 255.0
+                rate = object_size / mask_size
+                rate = min(max(rate, 0), 1)
+                alpha = torch.tensor((rate, 1 - rate))
+
             else:
-                aug_mask = mask
-                S_aug = len(np.nonzero(aug_mask)[0])
-                Srate = S_mask / S_aug
-                Srate = min(max(Srate, 0), 1)
-                alpha = torch.tensor((Srate, 1 - Srate))
+                raise ValueError(f"Invalid task type: {data_info['task_type']}")
 
         output["pixel_values"], output["mask"] = augment_images(images, aug_mask, self.resolution)
-        output["tradeoff"] = alpha
 
-        # tokenization
-        output["input_idsA"], output["input_idsB"], output["input_idsC"], output["input_ids"] = self.tokenizer(
-            [data_info["promptA"], data_info["promptB"], data_info["promptC"], data_info["prompt"]],
-            max_length=self.tokenizer.model_max_length,
+        # filter data without meaningful masks (can be caused by randomcrop)
+        if len(torch.unique(output["mask"])) == 1:
+            return None
+
+        output["tradeoff"] = alpha
+        output["task"] = data_info["task_type"]
+
+        # tokenization, remember to convert prompt for multi-vector embeddings
+        promptA = self.pipeline.maybe_convert_prompt(data_info["promptA"], self.pipeline.tokenizer)
+        promptB = self.pipeline.maybe_convert_prompt(data_info["promptB"], self.pipeline.tokenizer)
+        prompt = self.pipeline.maybe_convert_prompt(data_info["prompt"], self.pipeline.tokenizer)
+
+        output["input_idsA"], output["input_idsB"], output["input_ids"] = self.pipeline.tokenizer(
+            [promptA, promptB, prompt],
+            max_length=self.pipeline.tokenizer.model_max_length,
             padding="max_length",
             truncation=True,
             return_tensors="pt",
@@ -228,36 +254,39 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
 
     def sample_data(self):
         buffer = []
-        for idx, anno_info in enumerate(self.anno_list):
+        for _, anno_info in enumerate(self.anno_list):
             anno_info = anno_info.split(",")
 
             prompt = anno_info[3]
             if random.random() < 0.5:
                 # using bounding box as training mask for object inpainting
+                task_type = "object_inpainting"
                 if anno_info[3] == INVALID_OPEN_FLAG:
-                    anno_info[3] = ""
-                promptA = self.task_prompt["object_inpainting"]["placeholder_tokens"]
-                promptB = self.task_prompt["object_inpainting"]["placeholder_tokens"]
+                    continue
+                promptA = self.task_prompt.object_inpainting.placeholder_tokens
+                promptB = self.task_prompt.object_inpainting.placeholder_tokens
             else:
                 # using exact object segmentation mask for shape-guided inpainting
+                task_type = "shape_inpainting"
                 if anno_info[3] == INVALID_OPEN_FLAG:
-                    anno_info[3] = ""
-                promptA = self.task_prompt["shape_inpainting"]["placeholder_tokens"]
-                promptB = self.task_prompt["context_inpainting"]["placeholder_tokens"]
+                    continue
+                promptA = self.task_prompt.shape_inpainting.placeholder_tokens
+                promptB = self.task_prompt.context_inpainting.placeholder_tokens
 
-            if self.desc_prefix:
-                promptA = f"{prompt} {promptA}"
-                promptB = f"{prompt} {promptB}"
+            if self.desc_prefix:  # for unet-based models
+                promptA, promptB = f"{prompt} {promptA}", f"{prompt} {promptB}"
+
             image_name, mask_name = anno_info[0], anno_info[2]
             image_name = image_name[1:] if image_name.startswith("/") else image_name
             mask_name = mask_name[1:] if mask_name.startswith("/") else mask_name
             image_name = os.path.join(self.image_root, image_name)
             mask_name = os.path.join(self.mask_root, mask_name)
+
             # 10% dropout for unconditional training
             if random.random() < 0.1:
-                promptA = ""
-                promptB = ""
                 prompt = ""
+                if self.desc_prefix:  # for unet-based models
+                    promptA = promptB = ""
 
             data_info = {
                 "img_path": image_name,
@@ -265,7 +294,7 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
                 "promptA": promptA,
                 "promptB": promptB,
                 "prompt": prompt,
-                "promptC": "P_abc",
+                "task_type": task_type,
             }
 
             if self.bufsize is None:
@@ -284,10 +313,8 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
 
             else:
                 select_idx = random.randint(0, self.bufsize - 1)
-                save_log(f"[Data] Idx/SelectIdx: {idx}/{select_idx} " f"Name: {data_info}")
 
                 selected_data = buffer[select_idx]
-                pipe_start_it = time.time()
                 try:
                     data = self._sample_data(selected_data)
                     yield data
@@ -295,8 +322,6 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
                     logger.info(f"Error in {selected_data}")
                     continue
 
-                pipe_end_it = time.time()
-                save_log(f"[Pipe] {pipe_end_it - pipe_start_it:.3f}s")
                 buffer[select_idx] = data_info
 
         for data_info in buffer:

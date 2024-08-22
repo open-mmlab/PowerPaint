@@ -1,4 +1,4 @@
-from .utils import ImageProjection, TokenizerWrapper, add_tokens
+from .loaders import CustomTextualInversionMixin
 
 
-__all__ = ["TokenizerWrapper", "ImageProjection", "add_tokens"]
+__all__ = ["CustomTextualInversionMixin"]

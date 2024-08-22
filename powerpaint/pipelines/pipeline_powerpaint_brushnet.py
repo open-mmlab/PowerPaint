@@ -10,6 +10,7 @@ from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTokenizer, CLIPV
 from diffusers.image_processor import PipelineImageInput, VaeImageProcessor
 from diffusers.loaders import FromSingleFileMixin, IPAdapterMixin, LoraLoaderMixin, TextualInversionLoaderMixin
 from diffusers.models import AutoencoderKL
+from diffusers.models.embeddings import ImageProjection
 from diffusers.models.lora import adjust_lora_scale_text_encoder
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline, StableDiffusionMixin
 from diffusers.pipelines.stable_diffusion.pipeline_output import StableDiffusionPipelineOutput
@@ -25,7 +26,7 @@ from diffusers.utils import (
 from diffusers.utils.torch_utils import is_compiled_module, is_torch_version, randn_tensor
 
 from ..models import BrushNetModel, UNet2DConditionModel
-from ..utils import ImageProjection
+from ..utils import CustomTextualInversionMixin
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -130,7 +131,7 @@ def retrieve_timesteps(
 class StableDiffusionPowerPaintBrushNetPipeline(
     DiffusionPipeline,
     StableDiffusionMixin,
-    TextualInversionLoaderMixin,
+    CustomTextualInversionMixin,
     LoraLoaderMixin,
     IPAdapterMixin,
     FromSingleFileMixin,
@@ -142,7 +143,7 @@ class StableDiffusionPowerPaintBrushNetPipeline(
     implemented for all pipelines (downloading, saving, running on a particular device, etc.).
 
     The pipeline also inherits the following loading methods:
-        - [`~loaders.TextualInversionLoaderMixin.load_textual_inversion`] for loading textual inversion embeddings
+        - [`~loaders.CustomTextualInversionMixin.load_textual_inversion`] for loading textual inversion embeddings
         - [`~loaders.LoraLoaderMixin.load_lora_weights`] for loading LoRA weights
         - [`~loaders.LoraLoaderMixin.save_lora_weights`] for saving LoRA weights
         - [`~loaders.FromSingleFileMixin.from_single_file`] for loading `.ckpt` files
@@ -181,9 +182,9 @@ class StableDiffusionPowerPaintBrushNetPipeline(
         text_encoder: CLIPTextModel,
         tokenizer: CLIPTokenizer,
         unet: UNet2DConditionModel,
-        brushnet: BrushNetModel,
         scheduler: KarrasDiffusionSchedulers,
         safety_checker: StableDiffusionSafetyChecker,
+        brushnet: BrushNetModel = None,
         feature_extractor: CLIPImageProcessor = None,
         image_encoder: CLIPVisionModelWithProjection = None,
         requires_safety_checker: bool = True,
@@ -205,6 +206,9 @@ class StableDiffusionPowerPaintBrushNetPipeline(
                 "Make sure to define a feature extractor when loading {self.__class__} if you want to use the safety"
                 " checker. If you do not want to use the safety checker, you can pass `'safety_checker=None'` instead."
             )
+
+        if brushnet is None:
+            brushnet = BrushNetModel.from_unet(unet)
 
         self.register_modules(
             vae=vae,
@@ -288,6 +292,7 @@ class StableDiffusionPowerPaintBrushNetPipeline(
             if isinstance(self, TextualInversionLoaderMixin):
                 promptA = self.maybe_convert_prompt(promptA, self.tokenizer)
                 promptB = self.maybe_convert_prompt(promptB, self.tokenizer)
+                promptU = self.maybe_convert_prompt(promptU, self.tokenizer)
 
             text_inputsA = self.tokenizer(
                 promptA,
@@ -421,6 +426,7 @@ class StableDiffusionPowerPaintBrushNetPipeline(
             if isinstance(self, TextualInversionLoaderMixin):
                 uncond_tokensA = self.maybe_convert_prompt(uncond_tokensA, self.tokenizer)
                 uncond_tokensB = self.maybe_convert_prompt(uncond_tokensB, self.tokenizer)
+                uncond_tokensU = self.maybe_convert_prompt(uncond_tokensU, self.tokenizer)
 
             max_length = prompt_embeds.shape[1]
             uncond_inputA = self.tokenizer(

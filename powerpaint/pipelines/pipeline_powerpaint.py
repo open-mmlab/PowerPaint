@@ -23,7 +23,7 @@ from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTokenizer
 
 from diffusers.configuration_utils import FrozenDict
 from diffusers.image_processor import VaeImageProcessor
-from diffusers.loaders import FromSingleFileMixin, LoraLoaderMixin, TextualInversionLoaderMixin
+from diffusers.loaders import FromSingleFileMixin, LoraLoaderMixin
 from diffusers.models import AsymmetricAutoencoderKL, AutoencoderKL, UNet2DConditionModel
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipelineOutput
@@ -31,6 +31,8 @@ from diffusers.pipelines.stable_diffusion.safety_checker import StableDiffusionS
 from diffusers.schedulers import KarrasDiffusionSchedulers
 from diffusers.utils import deprecate, is_accelerate_available, is_accelerate_version, logging
 from diffusers.utils.torch_utils import randn_tensor
+
+from ..utils import CustomTextualInversionMixin
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -154,7 +156,7 @@ def prepare_mask_and_masked_image(image, mask, height, width, return_image: bool
 
 
 class StableDiffusionInpaintPipeline(
-    DiffusionPipeline, TextualInversionLoaderMixin, LoraLoaderMixin, FromSingleFileMixin
+    DiffusionPipeline, CustomTextualInversionMixin, LoraLoaderMixin, FromSingleFileMixin
 ):
     r"""
     Pipeline for text-guided image inpainting using Stable Diffusion.
@@ -163,7 +165,7 @@ class StableDiffusionInpaintPipeline(
     implemented for all pipelines (downloading, saving, running on a particular device, etc.).
 
     The pipeline also inherits the following loading methods:
-        - [`~loaders.TextualInversionLoaderMixin.load_textual_inversion`] for loading textual inversion embeddings
+        - [`~loaders.CustomTextualInversionMixin.load_textual_inversion`] for loading textual inversion embeddings
         - [`~loaders.LoraLoaderMixin.load_lora_weights`] for loading LoRA weights
         - [`~loaders.LoraLoaderMixin.save_lora_weights`] for saving LoRA weights
 
@@ -372,7 +374,7 @@ class StableDiffusionInpaintPipeline(
 
         if prompt_embeds is None:
             # textual inversion: procecss multi-vector tokens if necessary
-            if isinstance(self, TextualInversionLoaderMixin):
+            if isinstance(self, CustomTextualInversionMixin):
                 promptA = self.maybe_convert_prompt(promptA, self.tokenizer)
 
             text_inputsA = self.tokenizer(
@@ -462,7 +464,7 @@ class StableDiffusionInpaintPipeline(
                 uncond_tokensB = negative_promptB
 
             # textual inversion: procecss multi-vector tokens if necessary
-            if isinstance(self, TextualInversionLoaderMixin):
+            if isinstance(self, CustomTextualInversionMixin):
                 uncond_tokensA = self.maybe_convert_prompt(uncond_tokensA, self.tokenizer)
                 uncond_tokensB = self.maybe_convert_prompt(uncond_tokensB, self.tokenizer)
 

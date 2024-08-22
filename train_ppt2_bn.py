@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 # modified from https://github.com/TencentARC/BrushNet/blob/main/examples/brushnet/train_brushnet.py
-# In the version
 
 import argparse
 import gc
@@ -25,15 +24,10 @@ from packaging import version
 from PIL import Image
 from torchvision import transforms
 from tqdm.auto import tqdm
-from transformers import AutoTokenizer, PretrainedConfig
+from transformers import PretrainedConfig
 
 import diffusers
 import powerpaint.datasets
-from diffusers import (
-    AutoencoderKL,
-    DDPMScheduler,
-    UniPCMultistepScheduler,
-)
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import compute_snr
 from diffusers.utils import check_min_version, is_wandb_available
@@ -41,7 +35,7 @@ from diffusers.utils.hub_utils import load_or_create_model_card, populate_model_
 from diffusers.utils.import_utils import is_xformers_available
 from diffusers.utils.torch_utils import is_compiled_module
 from powerpaint.datasets import ProbPickingDataset
-from powerpaint.models import BrushNetModel, UNet2DConditionModel
+from powerpaint.models import BrushNetModel
 from powerpaint.pipelines import StableDiffusionPowerPaintBrushNetPipeline
 
 
@@ -96,16 +90,14 @@ These are PowerPaint weights trained on {base_model} with new type of conditioni
     model_card.save(os.path.join(repo_folder, "README.md"))
 
 
-def log_validation(vae, text_encoder, tokenizer, unet, brushnet, args, accelerator, weight_dtype, step):
+def log_validation(text_encoder, tokenizer, brushnet, args, accelerator, weight_dtype, step):
     logger.info("Running validation... ")
 
-    # load the pipeline
-    pipeline = StableDiffusionPowerPaintBrushNetPipeline.from_pretrained(
+    # use fixed model from pretrained models
+    pipe = StableDiffusionPowerPaintBrushNetPipeline.from_pretrained(
         args.pretrained_model_name_or_path,
-        vae=vae,
         text_encoder=accelerator.unwrap_model(text_encoder),
         tokenizer=tokenizer,
-        unet=unet,
         brushnet=accelerator.unwrap_model(brushnet),
         safety_checker=None,
         revision=args.revision,
@@ -114,12 +106,11 @@ def log_validation(vae, text_encoder, tokenizer, unet, brushnet, args, accelerat
         local_files_only=True,  # load files from local cache
     )
 
-    pipeline.scheduler = UniPCMultistepScheduler.from_config(pipeline.scheduler.config)
-    pipeline = pipeline.to(accelerator.device)
-    pipeline.set_progress_bar_config(disable=True)
+    pipe = pipe.to(accelerator.device)
+    pipe.set_progress_bar_config(disable=True)
 
     if args.enable_xformers_memory_efficient_attention:
-        pipeline.enable_xformers_memory_efficient_attention()
+        pipe.enable_xformers_memory_efficient_attention()
 
     # load validation images
     image_logs = []
@@ -141,7 +132,7 @@ def log_validation(vae, text_encoder, tokenizer, unet, brushnet, args, accelerat
         image_grid.paste(validation_image, (0, 0))
         for i, p in enumerate(validation_prompts):
             with torch.autocast(accelerator.device.type):
-                image = pipeline(
+                image = pipe(
                     promptA=p.promptA,
                     promptB=p.promptB,
                     promptU=p.promptU,
@@ -175,7 +166,7 @@ def log_validation(vae, text_encoder, tokenizer, unet, brushnet, args, accelerat
         else:
             logger.warning(f"image logging not implemented for {tracker.name}")
 
-    del pipeline
+    # del pipeline
     gc.collect()
     torch.cuda.empty_cache()
 
@@ -565,44 +556,44 @@ def main(args):
                 repo_id=args.hub_model_id or Path(args.output_dir).name, exist_ok=True, token=args.hub_token
             ).repo_id
 
-    # Load tokenizer
-    if args.tokenizer_name:
-        tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name, revision=args.revision, use_fast=False)
-    elif args.pretrained_model_name_or_path:
-        tokenizer = AutoTokenizer.from_pretrained(
-            args.pretrained_model_name_or_path,
-            subfolder="tokenizer",
-            revision=args.revision,
-            use_fast=False,
-        )
+    # For mixed precision training we cast the text_encoder and vae weights to half-precision
+    # as these models are only used for inference, keeping weights in full precision is not required.
+    weight_dtype = torch.float32
+    if accelerator.mixed_precision == "fp16":
+        weight_dtype = torch.float16
+    elif accelerator.mixed_precision == "bf16":
+        weight_dtype = torch.bfloat16
 
-    # import correct text encoder class
-    text_encoder_cls = import_model_class_from_model_name_or_path(args.pretrained_model_name_or_path, args.revision)
-
-    # Load scheduler and models
-    noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
-    vae = AutoencoderKL.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision, variant=args.variant
-    )
-    unet = UNet2DConditionModel.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision, variant=args.variant
-    )
-    text_encoder = text_encoder_cls.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision
+    # initialize from pre-trained pipeline
+    pipe = StableDiffusionPowerPaintBrushNetPipeline.from_pretrained(
+        args.pretrained_model_name_or_path,
+        safety_checker=None,
+        revision=args.revision,
+        variant=args.variant,
+        torch_dtype=weight_dtype,
+        local_files_only=True,  # load files from local cache
     )
 
     if args.powerpaint_model_name_or_path:
         logger.info("Loading existing powerpaint weights")
-        brushnet = BrushNetModel.from_pretrained(args.powerpaint_model_name_or_path)
-    else:
-        logger.info("Initializing brushnet weights from unet")
-        brushnet = BrushNetModel.from_unet(unet)
+        pipe.brushnet = BrushNetModel.from_pretrained(args.powerpaint_model_name_or_path)
 
     # Taken from [Sayak Paul's Diffusers PR #6511](https://github.com/huggingface/diffusers/pull/6511/files)
     def unwrap_model(model):
         model = accelerator.unwrap_model(model)
         model = model._orig_mod if is_compiled_module(model) else model
         return model
+
+    # add learnable tokens for task prompts into tokenizer
+    pipe.add_tokens(
+        placeholder_tokens=[t.placeholder_tokens for t in args.task_prompt],
+        initializer_token=[t.initializer_token for t in args.task_prompt],
+        num_vectors_per_token=[t.num_vectors_per_token for t in args.task_prompt],
+    )
+
+    vae, tokenizer, unet, noise_scheduler = pipe.vae, pipe.tokenizer, pipe.unet, pipe.scheduler
+    text_encoder, brushnet = pipe.text_encoder, pipe.brushnet
+    text_encoder_cls = import_model_class_from_model_name_or_path(args.pretrained_model_name_or_path, args.revision)
 
     # `accelerate` 0.16.0 will have better support for customized saving
     if version.parse(accelerate.__version__) >= version.parse("0.16.0"):
@@ -684,51 +675,15 @@ def main(args):
     else:
         optimizer_class = torch.optim.AdamW
 
-    # add learnable tokens for task prompts into tokenizer
-    # adding dummy tokens for multi-vector
-    for name, task in args.task_prompt.items():
-        num_added_vectors, num_tries = 0, 0
-        added_placeholder_tokens = []
-        placeholder_tokens = task["placeholder_tokens"]
-        while True:
-            assert num_tries < 100, "Too many tries to add tokens. please use other placeholder token"
-            single_added_vector = tokenizer.add_tokens([placeholder_tokens])
-            # Successfully added new token
-            if single_added_vector == 1:
-                num_added_vectors += 1
-                added_placeholder_tokens.append(placeholder_tokens)
-            if num_added_vectors == task["num_vectors_per_token"]:
-                break
-            placeholder_tokens += f"_{num_added_vectors}"
-        # save the added placeholder_tokens
-        task["added_placeholder_tokens"] = added_placeholder_tokens
-
-        # convert the initializer_token and placeholder_token to ids
-        token_ids = tokenizer.encode(task["initializer_token"], add_special_tokens=False)
-        if len(token_ids) > 1:
-            raise ValueError("The initializer token should be a single token.")
-
-        initializer_token_id = token_ids[0]
-        placeholder_token_ids = tokenizer.convert_tokens_to_ids(added_placeholder_tokens)
-
-        # Resize the token embeddings as we are adding new special tokens to the tokenizer
-        text_encoder.resize_token_embeddings(len(tokenizer))
-        logger.info(f"Added {len(added_placeholder_tokens)} placeholder tokens for task {name}")
-
-        # Initialise the newly added placeholder token with the embeddings of the initializer token
-        token_embeds = text_encoder.get_input_embeddings().weight.data
-        with torch.no_grad():
-            for token_id in placeholder_token_ids:
-                token_embeds[token_id] = token_embeds[initializer_token_id].clone()
-
+    # 1. trainable embedding + 2. trainable model (brushnet)
     vae.requires_grad_(False)
     unet.requires_grad_(False)
+
     # Freeze all parameters except for the token embeddings in text encoder
     text_encoder.text_model.encoder.requires_grad_(False)
     text_encoder.text_model.final_layer_norm.requires_grad_(False)
     text_encoder.text_model.embeddings.position_embedding.requires_grad_(False)
 
-    # 1. trainable embedding + 2. trainable model (brushnet)
     optimizer = optimizer_class(
         list(brushnet.parameters()) + list(text_encoder.get_input_embeddings().parameters()),
         lr=args.learning_rate,
@@ -753,7 +708,7 @@ def main(args):
     datasets_list = []
     for d in args.train_data.datasets:
         dataset_class = getattr(powerpaint.datasets, d.dataset_class)
-        dataset_ = dataset_class(train_transforms, tokenizer, args.task_prompt, **d)
+        dataset_ = dataset_class(train_transforms, pipe, args.task_prompt, **d)
         datasets_list.append({"dataset": dataset_, "prob": d.prob})
 
     train_dataset = ProbPickingDataset(datasets_list)
@@ -790,14 +745,6 @@ def main(args):
     brushnet, text_encoder, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
         brushnet, text_encoder, optimizer, train_dataloader, lr_scheduler
     )
-
-    # For mixed precision training we cast the text_encoder and vae weights to half-precision
-    # as these models are only used for inference, keeping weights in full precision is not required.
-    weight_dtype = torch.float32
-    if accelerator.mixed_precision == "fp16":
-        weight_dtype = torch.float16
-    elif accelerator.mixed_precision == "bf16":
-        weight_dtype = torch.bfloat16
 
     # Move vae, unet and text_encoder to device and cast to weight_dtype
     vae.to(accelerator.device, dtype=weight_dtype)
@@ -881,14 +828,14 @@ def main(args):
                 latents = vae.encode(batch["pixel_values"].to(dtype=weight_dtype)).latent_dist.sample().detach()
                 latents = latents * vae.config.scaling_factor
 
-                # mask: 1 for masked regions 0 for known regions
+                # we follow the same annotation for mask as
+                # https://github.com/huggingface/diffusers/blob/v0.30.0/src/diffusers/pipelines/stable_diffusion/pipeline_stable_diffusion_inpaint.py
+                # mask: 1 for masked regions and 0 for known regions
                 mask = torch.nn.functional.interpolate(batch["mask"], size=(64, 64))
-                mask_image = batch["pixel_values"] * (1.0 - batch["mask"])
+                mask_image = batch["pixel_values"] * (batch["mask"] < 0.5)
                 mask_image_latents = vae.encode(mask_image.to(weight_dtype)).latent_dist.sample()
                 mask_image_latents = (mask_image_latents * vae.config.scaling_factor).to(weight_dtype)
 
-                # we use the opposite 0/1 values for mask as the original brushnet
-                # conditioning_latents = torch.concat([mask_image_latents, 1 - mask], 1)
                 conditioning_latents = torch.concat([mask, mask_image_latents], 1)
 
                 # Sample noise that we'll add to the latents
@@ -915,11 +862,6 @@ def main(args):
                 encoder_hidden_states_brushnet = (
                     tradeoff[:, 0:1, :] * encoder_hidden_statesA + tradeoff[:, 1:, :] * encoder_hidden_statesB.detach()
                 )
-
-                # # wegiht for the default prompt placeholder
-                # if False:
-                #     encoder_hidden_statesC = text_encoder(batch["input_idsC"], return_dict=False)[0]
-                #     encoder_hidden_states_brushnet += 1e-17 * encoder_hidden_statesC
 
                 # Run the brushnet forward pass
                 down_block_res_samples, mid_block_res_sample, up_block_res_samples = brushnet(
@@ -974,11 +916,10 @@ def main(args):
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
-                    accelerator.clip_grad_norm_(
-                        list(brushnet.parameters())
-                        + list(accelerator.unwrap_model(text_encoder).get_input_embeddings().parameters()),
-                        args.max_grad_norm,
+                    params_to_clip = list(brushnet.parameters()) + list(
+                        accelerator.unwrap_model(text_encoder).get_input_embeddings().parameters()
                     )
+                    accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()

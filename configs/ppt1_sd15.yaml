@@ -96,6 +96,12 @@ validation_data:
           promptU: "A cake on the table"
           tradeoff: 0.9
 
+        - task: "context inpainting" # text-free context inpainting
+          promptA: ${task_prompt.context_inpainting.placeholder_tokens}
+          promptB: ${task_prompt.context_inpainting.placeholder_tokens}
+          promptU: "high-quality"
+          tradeoff: 1
+
         - task: "object_removal" # context-guided object remove
           promptA: ${task_prompt.context_inpainting.placeholder_tokens}
           promptB: ${task_prompt.context_inpainting.placeholder_tokens}

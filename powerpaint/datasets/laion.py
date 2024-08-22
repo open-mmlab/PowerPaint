@@ -13,8 +13,6 @@ from torch.utils.data import IterableDataset
 from torchvision import transforms
 from webdataset import utils
 
-from .utils import save_log
-
 
 logger = get_logger(__name__)
 
@@ -26,7 +24,7 @@ except ImportError:
 
 class LaionIterJsonDataset(IterableDataset):
     """Load data from Laion.
-    PowerPaint mainly uses laion as training data for:
+    PowerPaint mainly uses laion as prompt-free training data for:
         - text-to-image generation
         - context-aware (i.e., text-free) image inpainting
         - image outpainting
@@ -35,7 +33,7 @@ class LaionIterJsonDataset(IterableDataset):
     def __init__(
         self,
         transforms,
-        tokenizer,
+        pipeline,
         task_prompt,
         desc_prefix=False,
         name=None,
@@ -71,7 +69,7 @@ class LaionIterJsonDataset(IterableDataset):
         self.resolution = resolution
         self.epoch = -1
         self.deterministic = deterministic
-        self.tokenizer = tokenizer
+        self.pipeline = pipeline
         self.task_prompt = task_prompt
         self.desc_prefix = desc_prefix
 
@@ -95,8 +93,6 @@ class LaionIterJsonDataset(IterableDataset):
         for _ in range(len(self.anno_list)):
             index = rng.randint(0, len(self.anno_list) - 1)
 
-            save_log(f"[Anno] Idx: {index} Name: {self.anno_list[index]}")
-
             yield {"anno": self.anno_list[index], "index": index}
 
     def sample_anno(self):
@@ -116,15 +112,6 @@ class LaionIterJsonDataset(IterableDataset):
         # preprocessing
         output = {}
         output["pixel_values"] = self.transforms(Image.fromarray(np.uint8(images)))
-
-        # tokenization
-        output["input_idsA"], output["input_idsB"], output["input_idsC"], output["input_ids"] = self.tokenizer(
-            [data_info["promptA"], data_info["promptB"], data_info["promptC"], data_info["prompt"]],
-            max_length=self.tokenizer.model_max_length,
-            padding="max_length",
-            truncation=True,
-            return_tensors="pt",
-        ).input_ids
 
         if data_info["task_type"] == "outpainting":
             temp_mask = torch.zeros((self.resolution, self.resolution))
@@ -183,64 +170,66 @@ class LaionIterJsonDataset(IterableDataset):
 
         alpha = torch.tensor((1.0, 0.0))
         output["tradeoff"] = alpha
+        output["task"] = data_info["task_type"]
+
+        # tokenization, remember to convert prompt for multi-vector embeddings
+        promptA = self.pipeline.maybe_convert_prompt(data_info["promptA"], self.pipeline.tokenizer)
+        promptB = self.pipeline.maybe_convert_prompt(data_info["promptB"], self.pipeline.tokenizer)
+        prompt = self.pipeline.maybe_convert_prompt(data_info["prompt"], self.pipeline.tokenizer)
+
+        output["input_idsA"], output["input_idsB"], output["input_ids"] = self.pipeline.tokenizer(
+            [promptA, promptB, prompt],
+            max_length=self.pipeline.tokenizer.model_max_length,
+            padding="max_length",
+            truncation=True,
+            return_tensors="pt",
+        ).input_ids
 
         return output
 
     def sample_data(self, anno_info):
-        start_it = time.time()
         data = self.client.get(anno_info)
-        dl_end_it = time.time()
-
         anno_str = data.decode()
         annotations = anno_str.split("\n")
         annotations = [json.loads(anno) for anno in annotations if anno != ""]
         random.shuffle(annotations)
-        load_end_it = time.time()
-
-        save_log(f"[Anno Download] {dl_end_it - start_it:.3f}s")
-        save_log(f"[Anno Load] {load_end_it - dl_end_it:.3f}s")
 
         buffer = []
         # load image and annotation data
-        for idx, anno_info in enumerate(annotations):
+        mask_name = ""
+        prompt = ""
+        promptA = self.task_prompt.context_inpainting.placeholder_tokens
+        promptB = self.task_prompt.context_inpainting.placeholder_tokens
+        for _, anno_info in enumerate(annotations):
             class_p = random.random()
             task_type = ""
 
             if class_p < 0.32:
                 # text-to-image generation w/o task prompt
                 task_type = "t2i"
-                promptA = ""
-                promptB = ""
                 prompt = anno_info["content"]
-                mask_name = ""
 
             elif class_p < 0.52:
                 # image outpainting with task prompt w/o description
                 task_type = "outpainting"
-                promptA = self.task_prompt["context_inpainting"]["placeholder_tokens"]
-                promptB = self.task_prompt["context_inpainting"]["placeholder_tokens"]
-                prompt = ""
-                mask_name = ""
 
             else:
                 # context-aware (text-free) image inpanting w/ task prompt
                 task_type = "inpainting"
-                promptA = self.task_prompt["context_inpainting"]["placeholder_tokens"]
-                promptB = self.task_prompt["context_inpainting"]["placeholder_tokens"]
-                prompt = ""
-                # 50% probability to use description
-                if random.random() < 0.5:
+                # 30% probability to use description
+                if random.random() < 0.3:  # 0.5
                     prompt = anno_info["content"]
                 mask_name = random.choice(self.random_mask_list)
 
-            if promptA != "" and promptB != "" and prompt != "" and self.desc_prefix:
+            if self.desc_prefix and prompt != "":  # for unet-based models
                 promptA = f"{prompt} {promptA}"
                 promptB = f"{prompt} {promptB}"
+
             # 10% probability to drop all conditions for unconditional generation
             if random.random() < 0.1:
-                promptA = ""
-                promptB = ""
                 prompt = ""
+                if self.desc_prefix:  # for unet-based models
+                    promptA = promptB = ""
 
             remark = anno_info["remark"]
             aesthetic_score = remark["aesthetic_score"]
@@ -281,7 +270,6 @@ class LaionIterJsonDataset(IterableDataset):
                 "promptA": promptA,
                 "promptB": promptB,
                 "prompt": prompt,
-                "promptC": "P_abc",
                 "task_type": task_type,
             }
 
@@ -298,11 +286,8 @@ class LaionIterJsonDataset(IterableDataset):
             else:
                 select_idx = random.randint(0, self.bufsize - 1)
 
-                save_log(f"[Data] Idx/SelectIdx: {idx}/{select_idx} " f"Name: {img_path}")
-
                 selected_data = buffer[select_idx]
                 buffer[select_idx] = data_info
-                pipe_start_it = time.time()
 
                 try:
                     data = self._sample_data(selected_data)
@@ -310,8 +295,6 @@ class LaionIterJsonDataset(IterableDataset):
                 except Exception:
                     logger.info(f"Error in {selected_data}")
                     continue
-                pipe_end_it = time.time()
-                save_log(f"[Pipe] {pipe_end_it - pipe_start_it:.3f}s")
 
         for data_info in buffer:
             try:
