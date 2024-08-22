@@ -195,41 +195,38 @@ class LaionIterJsonDataset(IterableDataset):
         random.shuffle(annotations)
 
         buffer = []
-        # load image and annotation data
-        mask_name = ""
-        prompt = ""
-        promptA = self.task_prompt.context_inpainting.placeholder_tokens
-        promptB = self.task_prompt.context_inpainting.placeholder_tokens
         for _, anno_info in enumerate(annotations):
+            # load image and annotation data
+            mask_name = ""
+            prompt = ""
+            promptA = self.task_prompt.context_inpainting.placeholder_tokens
+            promptB = self.task_prompt.context_inpainting.placeholder_tokens
             class_p = random.random()
             task_type = ""
 
-            if class_p < 0.32:
-                # text-to-image generation w/o task prompt
+            if class_p < 0.25:
+                # t2i: ctxt + desc
                 task_type = "t2i"
                 prompt = anno_info["content"]
 
-            elif class_p < 0.52:
-                # image outpainting with task prompt w/o description
+            elif class_p < 0.5:
+                # outpainting: ctxt + NULL
                 task_type = "outpainting"
 
             else:
-                # context-aware (text-free) image inpanting w/ task prompt
+                # inpainting: ctxt + desc or NULL
                 task_type = "inpainting"
-                # 30% probability to use description
-                if random.random() < 0.3:  # 0.5
+                if random.random() < 0.2:
                     prompt = anno_info["content"]
                 mask_name = random.choice(self.random_mask_list)
 
             if self.desc_prefix and prompt != "":  # for unet-based models
-                promptA = f"{prompt} {promptA}"
-                promptB = f"{prompt} {promptB}"
+                promptA, promptB = f"{promptA} {prompt}", f"{promptB} {prompt}"
 
             # 10% probability to drop all conditions for unconditional generation
+            # NULL + NULL
             if random.random() < 0.1:
-                prompt = ""
-                if self.desc_prefix:  # for unet-based models
-                    promptA = promptB = ""
+                promptA = promptB = prompt = ""
 
             remark = anno_info["remark"]
             aesthetic_score = remark["aesthetic_score"]

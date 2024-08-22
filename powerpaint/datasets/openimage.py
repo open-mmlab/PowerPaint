@@ -256,25 +256,27 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
         buffer = []
         for _, anno_info in enumerate(self.anno_list):
             anno_info = anno_info.split(",")
+            if anno_info[3] == INVALID_OPEN_FLAG:
+                continue
 
             prompt = anno_info[3]
             if random.random() < 0.5:
                 # using bounding box as training mask for object inpainting
+                # bbox-inpaint: obj + desc
                 task_type = "object_inpainting"
-                if anno_info[3] == INVALID_OPEN_FLAG:
-                    continue
                 promptA = self.task_prompt.object_inpainting.placeholder_tokens
                 promptB = self.task_prompt.object_inpainting.placeholder_tokens
+                # let see: obj + NULL
+                if random.random() < 0.3:
+                    prompt = ""
             else:
                 # using exact object segmentation mask for shape-guided inpainting
                 task_type = "shape_inpainting"
-                if anno_info[3] == INVALID_OPEN_FLAG:
-                    continue
                 promptA = self.task_prompt.shape_inpainting.placeholder_tokens
                 promptB = self.task_prompt.context_inpainting.placeholder_tokens
 
-            if self.desc_prefix:  # for unet-based models
-                promptA, promptB = f"{prompt} {promptA}", f"{prompt} {promptB}"
+            if self.desc_prefix and prompt != "":  # for unet-based models
+                promptA, promptB = f"{promptA} {prompt}", f"{promptB} {prompt}"
 
             image_name, mask_name = anno_info[0], anno_info[2]
             image_name = image_name[1:] if image_name.startswith("/") else image_name
@@ -284,9 +286,7 @@ class OpenImageBLIPaug_Dataset(IterableDataset):
 
             # 10% dropout for unconditional training
             if random.random() < 0.1:
-                prompt = ""
-                if self.desc_prefix:  # for unet-based models
-                    promptA = promptB = ""
+                promptA = promptB = prompt = ""
 
             data_info = {
                 "img_path": image_name,

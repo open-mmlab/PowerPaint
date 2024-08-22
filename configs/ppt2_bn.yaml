@@ -27,7 +27,7 @@ train_data:
   datasets:
     - name: "laion5b"
       # the probability of presence during training
-      prob: 0.4
+      prob: 0.4 # the probability of presence during training
       dataset_class: "LaionIterJsonDataset"
       desc_prefix: false # set as true to put description in front of task prompt
 
