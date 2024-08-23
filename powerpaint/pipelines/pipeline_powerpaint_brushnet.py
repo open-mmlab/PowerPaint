@@ -1197,8 +1197,6 @@ class StableDiffusionPowerPaintBrushNetPipeline(
         mask = torch.nn.functional.interpolate(
             original_mask, size=(conditioning_latents.shape[-2], conditioning_latents.shape[-1])
         )
-        # conditioning_latents = torch.concat([conditioning_latents, mask], 1)
-        # we use different concatenation order for BrushNet
         conditioning_latents = torch.concat([mask, conditioning_latents], 1)
 
         # 6.5 Optionally get Guidance Scale Embedding

@@ -26,8 +26,8 @@ train_data:
   resolution: 512
   datasets:
     - name: "laion5b"
-      # the probability of presence during training
-      prob: 0.4 # the probability of presence during training
+      # for text-free task prompts
+      prob: 0.6 # the probability of presence during training
       dataset_class: "LaionIterJsonDataset"
       desc_prefix: false # set as true to put description in front of task prompt
 
@@ -40,7 +40,8 @@ train_data:
       resolution: 512
 
     - name: "openimages"
-      prob: 0.6 # the probability of presence during training
+      # for text-guided task prompts
+      prob: 0.4 # the probability of presence during training
       dataset_class: "OpenImageBLIPaug_Dataset"
       desc_prefix: false # set description in front of task prompt
 
@@ -74,7 +75,7 @@ validation_data:
   data_root: "examples"
   cases:
     - image: "cake.jpg"
-      mask: "cake_object_mask.jpg"
+      mask: "cake_object_mask.png"
       prompt:
         - task: "object_inpainting" # text-guided object inpainting
           promptA: ${task_prompt.object_inpainting.placeholder_tokens}

@@ -120,7 +120,9 @@ def log_validation(tokenizer, text_encoder, brushnet, args, accelerator, weight_
     for case in args.validation_data.cases:
         validation_prompts = case.prompt
         validation_image = Image.open(os.path.join(args.validation_data.data_root, case.image)).convert("RGB")
-        validation_mask = Image.open(os.path.join(args.validation_data.data_root, case.mask)).convert("L")
+        validation_mask = Image.open(os.path.join(args.validation_data.data_root, case.mask))
+        validation_mask = validation_mask.resize((validation_image.size[0], validation_image.size[1]), Image.NEAREST)
+        validation_mask = validation_mask.convert("L")
         validation_image = Image.composite(
             Image.new("RGB", (validation_image.size[0], validation_image.size[1]), (0, 0, 0)),
             validation_image,
