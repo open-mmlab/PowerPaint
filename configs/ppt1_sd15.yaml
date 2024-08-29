@@ -1,0 +1,112 @@
+pretrained_model_name_or_path: "runwayml/stable-diffusion-v1-5"
+output_dir: "runs/ppt1_sd15"
+tracker_project_name: "ppt1_sd15"
+report_to: "tensorboard"
+
+
+# learnable task prompts
+task_prompt:
+  object_inpainting:
+    placeholder_tokens: "P_obj"
+    initializer_token: "a"
+    num_vectors_per_token: 10
+
+  context_inpainting:
+    placeholder_tokens: "P_ctxt"
+    initializer_token: "a"
+    num_vectors_per_token: 10
+
+  shape_inpainting:
+    placeholder_tokens: "P_shape"
+    initializer_token: "a"
+    num_vectors_per_token: 10
+
+
+
+# training data
+train_data:
+  resolution: 512
+  datasets:
+    - name: "laion5b"
+      # the probability of presence during training
+      prob: 0.4
+      dataset_class: "LaionIterJsonDataset"
+      desc_prefix: true # set as true to put description in front of task prompt
+
+      # you may need to change the path to your own path
+      client_prefix: "laion5b:"
+      anno_root: "laion5b:s3://llm-process/laion-5b/format/v020/laion2B-en/"
+      random_mask_root: "data/lama_mask/"
+      aethetic_score_threshold: 5
+      bufsize: 100
+      resolution: 512
+
+    - name: "openimages"
+      prob: 0.6 # the probability of presence during training
+      dataset_class: "OpenImageBLIPaug_Dataset"
+      desc_prefix: true #set description in front of task prompt
+
+      # you may need to change the path to your own path
+      image_root: "openmmlab:s3://openmmlab/datasets/detection/OpenImages/OpenImages/train/"
+      mask_root: "data/openimagev6/mask/"
+      # prompt that describes segmented objects
+      anno_root: "data/openimagev6/prompt"
+      aethetic_score_threshold: 0.1
+      bufsize: null
+      resolution: 512
+
+
+default_placeholder: false # set as true to avoid find unused_parameters
+
+
+# training hyper-parameters
+learning_rate: 1e-5
+max_train_steps: 25e3            # max training steps
+train_batch_size: 64              # batch size per GPU
+dataloader_num_workers: 8
+gradient_accumulation_steps: 2
+
+lr_scheduler: "constant_with_warmup"
+lr_warmup_steps: 2000
+
+gradient_checkpointing: true
+resume_from_checkpoint: "latest"
+
+checkpointing_steps: 1e3
+validation_steps: 1e3
+checkpoints_total_limit: 10
+
+
+# validation data
+validation_data:
+  data_root: "examples"
+  cases:
+    - image: "cake.jpg"
+      mask: "cake_object_mask.png"
+      prompt:
+        - task: "object_inpainting" # text-guided object inpainting
+          promptA: ${task_prompt.object_inpainting.placeholder_tokens} A cake on the table
+          promptB: ${task_prompt.object_inpainting.placeholder_tokens} A cake on the table
+          tradeoff: 1.0
+
+        - task: "context inpainting" # text-free context inpainting
+          promptA: ${task_prompt.context_inpainting.placeholder_tokens} high-quality, beautiful
+          promptB: ${task_prompt.context_inpainting.placeholder_tokens} high-quality, beautiful
+          tradeoff: 1.0
+
+        - task: "object_removal" # context-guided object remove
+          promptA: ${task_prompt.context_inpainting.placeholder_tokens}
+          promptB: ${task_prompt.context_inpainting.placeholder_tokens}
+          tradeoff: 1.0
+          negative_promptA: ${task_prompt.object_inpainting.placeholder_tokens}
+          negative_promptB: ${task_prompt.object_inpainting.placeholder_tokens}
+
+        - task: "shape_inpainting" # shape-guided object inpainting
+          promptA: ${task_prompt.shape_inpainting.placeholder_tokens} A cake on the table
+          promptB: ${task_prompt.context_inpainting.placeholder_tokens} A cake on the table
+          tradeoff: 0.5
+
+        - task: "t2i" # context-guided object remove
+          promptA: ${task_prompt.context_inpainting.placeholder_tokens} a blue cake on the table, high-quality
+          promptB: "${task_prompt.context_inpainting.placeholder_tokens} a blue cake on the table, high-quality"
+          tradeoff: 1.0

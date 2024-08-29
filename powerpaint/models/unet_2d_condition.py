@@ -1,3 +1,5 @@
+# adapted from https://github.com/TencentARC/BrushNet/blob/main/src/diffusers/models/unets/unet_2d_condition.py
+
 # Copyright 2024 The HuggingFace Team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,11 +46,7 @@ from diffusers.models.embeddings import (
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.utils import USE_PEFT_BACKEND, BaseOutput, deprecate, logging, scale_lora_layers, unscale_lora_layers
 
-from .unet_2d_blocks import (
-    get_down_block,
-    get_mid_block,
-    get_up_block,
-)
+from .unet_2d_blocks import get_down_block, get_mid_block, get_up_block
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name

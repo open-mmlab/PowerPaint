@@ -1,3 +1,6 @@
+# modified from https://github.com/TencentARC/BrushNet/blob/main/src/diffusers/models/brushnet.py
+# modification: we preserve the cross-attention layers for taking as input the task prompts
+
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -20,15 +23,10 @@ from diffusers.models.embeddings import (
     Timesteps,
 )
 from diffusers.models.modeling_utils import ModelMixin
+from diffusers.models.unets.unet_2d_blocks import CrossAttnDownBlock2D
 from diffusers.utils import BaseOutput, logging
 
-from .unet_2d_blocks import (
-    CrossAttnDownBlock2D,
-    DownBlock2D,
-    get_down_block,
-    get_mid_block,
-    get_up_block,
-)
+from .unet_2d_blocks import DownBlock2D, get_down_block, get_mid_block, get_up_block
 from .unet_2d_condition import UNet2DConditionModel
 
 
@@ -143,6 +141,8 @@ class BrushNetModel(ModelMixin, ConfigMixin):
         conditioning_channels: int = 5,
         flip_sin_to_cos: bool = True,
         freq_shift: int = 0,
+        # The original BrushNet copies U-Net structure while excluding cross-attention layers
+        # We preserve it for taking as input the task prompts
         down_block_types: Tuple[str, ...] = (
             "CrossAttnDownBlock2D",
             "CrossAttnDownBlock2D",

@@ -73,7 +73,6 @@ dependencies:
     - markupsafe==2.1.5
     - matplotlib==3.9.0
     - mdurl==0.1.2
-    - mmengine==0.10.4
     - mpmath==1.3.0
     - networkx==3.2.1
     - nodeenv==1.9.1

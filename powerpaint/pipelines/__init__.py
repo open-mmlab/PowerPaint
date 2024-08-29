@@ -1,6 +1,6 @@
-from .pipeline_PowerPaint import StableDiffusionInpaintPipeline
-from .pipeline_PowerPaint_Brushnet_CA import StableDiffusionPowerPaintBrushNetPipeline
-from .pipeline_PowerPaint_ControlNet import StableDiffusionControlNetInpaintPipeline
+from .pipeline_powerpaint import StableDiffusionInpaintPipeline
+from .pipeline_powerpaint_brushnet import StableDiffusionPowerPaintBrushNetPipeline
+from .pipeline_powerpaint_controlnet import StableDiffusionControlNetInpaintPipeline
 
 
 __all__ = [

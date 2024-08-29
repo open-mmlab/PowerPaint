@@ -3,6 +3,7 @@ checkpoints/
 .ruff_cache
 pretrained_weights/
 output/
+runs/
 output
 .venv/
 mlruns/
@@ -16,3 +17,5 @@ data/
 *.jpg
 *.mp4
 *.gif
+
+debug*

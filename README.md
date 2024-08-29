@@ -1,10 +1,10 @@
 # 🖌️ ECCV 2024 | PowerPaint: A Versatile Image Inpainting Model
 
-[**A Task is Worth One Word: Learning with Task Prompts for High-Quality Versatile Image Inpainting**](https://arxiv.org/abs/2312.03594)
+[**[ECCV 2024] | A Task is Worth One Word: Learning with Task Prompts for High-Quality Versatile Image Inpainting**](https://arxiv.org/abs/2312.03594)
 
-[Junhao Zhuang](https://github.com/zhuang2002), [Yanhong Zeng](https://zengyh1900.github.io/), [Wenran Liu](https://github.com/liuwenran), [Chun Yuan†](https://www.sigs.tsinghua.edu.cn/yc2_en/main.htm), [Kai Chen†](https://chenkai.site/)
+[Junhao Zhuang](https://github.com/zhuang2002), [♦Yanhong Zeng](https://zengyh1900.github.io/), [Wenran Liu](https://github.com/liuwenran), [†Chun Yuan](https://www.sigs.tsinghua.edu.cn/yc2_en/main.htm), [†Kai Chen](https://chenkai.site/)
 
-(†corresponding author)
+(♦project lead, †corresponding author)
 
 [![arXiv](https://img.shields.io/badge/arXiv-2312.03594-b31b1b.svg)](https://arxiv.org/abs/2312.03594)
 [![Project Page](https://img.shields.io/badge/PowerPaint-Website-green)](https://powerpaint.github.io/)
@@ -50,6 +50,8 @@ PowerPaint is a high-quality versatile image inpainting model that supports text
 
 ## Get Started
 
+**Recommend Environment:** `cuda 11.8` + `python 3.9`
+
 ```bash
 # Clone the Repository
 git clone git@github.com:open-mmlab/PowerPaint.git
@@ -84,13 +86,16 @@ git lfs clone https://huggingface.co/JunhaoZhuang/PowerPaint-v1/ ./checkpoints/p
 python app.py --share
 ```
 
-For the BrushNet-based PowerPaint, you can run the following command:
+We suggest PowerPaint-V2 that is built upon BrushNet with RealisticVision as the base model, which exhibits higher visual quality. You can run the following command:
 ```bash
 # Clone PowerPaint Model
 git lfs clone https://huggingface.co/JunhaoZhuang/PowerPaint_v2/ ./checkpoints/ppt-v2
 
 python app.py --share --version ppt-v2 --checkpoint_dir checkpoints/ppt-v2
 ```
+Specifically, if you have downloaded the weights and want to skip the step of cloning the model, you can skip that step by enabling `--local_files_only`.
+
+
 
 ### Text-Guided Object Inpainting
 
@@ -155,14 +160,21 @@ Basically, we recommend to use 0.5-0.6 for fitting degree when you want to gener
 
 
 
-
-
-
-
-
 ## Training
 
-Stay tuned!
+1. Prepare training data. You may need to rewrite [`Datasets`](./powerpaint/datasets/__init__.py）per your need (e.g., data and storage formats). Here, we use petreloss to read training dataset from cloud storages. Besides, the recipe of datasets for training a versatile model can be tricky but intuitive.
+
+2. Start training. We suggest using PowerPaint-V2 version, which is built upon BrushNet and requires smaller batch size for training. You can train it with the following command,
+```shell
+accelerate launch --config_file configs/acc.yaml train_ppt2_bn.py --config configs/ppt2_bn.yaml
+```
+where `configs/acc.yaml` is the configuration file for using accelerate, and `configs/ppt2_bn.yaml` is the configuration file for training PowerPaint-V2.
+
+
+PowerPaint-V1 version often requires much larger training batch size to converge (e.g., 1024). You can train it with the following command,
+```shell
+accelerate launch --config_file configs/acc.yaml train_ppt1_sd15.py --config configs/ppt1_sd15.yaml
+```
 
 
 
