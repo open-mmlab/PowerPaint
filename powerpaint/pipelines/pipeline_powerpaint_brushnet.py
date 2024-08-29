@@ -289,6 +289,7 @@ class StableDiffusionPowerPaintBrushNetPipeline(
         if prompt_embeds is None:
             # textual inversion: procecss multi-vector tokens if necessary
             if isinstance(self, TextualInversionLoaderMixin):
+                prompt = self.maybe_convert_prompt(prompt, self.tokenizer)
                 promptA = self.maybe_convert_prompt(promptA, self.tokenizer)
                 promptB = self.maybe_convert_prompt(promptB, self.tokenizer)
 
@@ -422,6 +423,7 @@ class StableDiffusionPowerPaintBrushNetPipeline(
 
             # textual inversion: procecss multi-vector tokens if necessary
             if isinstance(self, TextualInversionLoaderMixin):
+                uncond_tokensU = self.maybe_convert_prompt(uncond_tokensU, self.tokenizer)
                 uncond_tokensA = self.maybe_convert_prompt(uncond_tokensA, self.tokenizer)
                 uncond_tokensB = self.maybe_convert_prompt(uncond_tokensB, self.tokenizer)
 
@@ -900,6 +902,9 @@ class StableDiffusionPowerPaintBrushNetPipeline(
         promptA: Union[str, List[str]] = None,
         promptB: Union[str, List[str]] = None,
         prompt: Union[str, List[str]] = None,
+        negative_promptA: Optional[Union[str, List[str]]] = None,
+        negative_promptB: Optional[Union[str, List[str]]] = None,
+        negative_prompt: Optional[Union[str, List[str]]] = None,
         tradeoff: float = 1.0,
         image: PipelineImageInput = None,
         mask: PipelineImageInput = None,
@@ -908,9 +913,6 @@ class StableDiffusionPowerPaintBrushNetPipeline(
         num_inference_steps: int = 50,
         timesteps: List[int] = None,
         guidance_scale: float = 7.5,
-        negative_promptA: Optional[Union[str, List[str]]] = None,
-        negative_promptB: Optional[Union[str, List[str]]] = None,
-        negative_prompt: Optional[Union[str, List[str]]] = None,
         num_images_per_prompt: Optional[int] = 1,
         eta: float = 0.0,
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,

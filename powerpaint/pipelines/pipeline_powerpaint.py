@@ -376,6 +376,7 @@ class StableDiffusionInpaintPipeline(
             # textual inversion: procecss multi-vector tokens if necessary
             if isinstance(self, CustomTextualInversionMixin):
                 promptA = self.maybe_convert_prompt(promptA, self.tokenizer)
+                promptB = self.maybe_convert_prompt(promptB, self.tokenizer)
 
             text_inputsA = self.tokenizer(
                 promptA,
@@ -724,17 +725,16 @@ class StableDiffusionInpaintPipeline(
         self,
         promptA: Union[str, List[str]] = None,
         promptB: Union[str, List[str]] = None,
+        negative_promptA: Optional[Union[str, List[str]]] = None,
+        negative_promptB: Optional[Union[str, List[str]]] = None,
+        tradeoff: float = 1.0,
         image: Union[torch.FloatTensor, PIL.Image.Image] = None,
         mask: Union[torch.FloatTensor, PIL.Image.Image] = None,
         height: Optional[int] = None,
         width: Optional[int] = None,
         strength: float = 1.0,
-        tradeoff: float = 1.0,
-        tradeoff_nag: float = 1.0,
         num_inference_steps: int = 50,
         guidance_scale: float = 7.5,
-        negative_promptA: Optional[Union[str, List[str]]] = None,
-        negative_promptB: Optional[Union[str, List[str]]] = None,
         num_images_per_prompt: Optional[int] = 1,
         eta: float = 0.0,
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
@@ -747,6 +747,7 @@ class StableDiffusionInpaintPipeline(
         callback_steps: int = 1,
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
         task_class: Union[torch.Tensor, float, int] = None,
+        **kwargs,
     ):
         r"""
         The call function to the pipeline for generation.
@@ -896,7 +897,6 @@ class StableDiffusionInpaintPipeline(
             do_classifier_free_guidance,
             negative_promptA,
             negative_promptB,
-            tradeoff_nag,
             prompt_embeds=prompt_embeds,
             negative_prompt_embeds=negative_prompt_embeds,
             lora_scale=text_encoder_lora_scale,

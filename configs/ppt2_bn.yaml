@@ -63,8 +63,8 @@ max_train_steps: 300e3           # max training steps
 train_batch_size: 6              # batch size per GPU
 dataloader_num_workers: 4
 
-checkpointing_steps: 2e3
-validation_steps: 2e3
+checkpointing_steps: 10e3
+validation_steps: 10e3
 checkpoints_total_limit: 10
 
 resume_from_checkpoint: "latest"
@@ -86,15 +86,6 @@ validation_data:
           negative_promptB: ${task_prompt.object_inpainting.placeholder_tokens}
           negative_prompt: ""
 
-        - task: "shape_inpainting" # shape-guided object inpainting
-          promptA: ${task_prompt.shape_inpainting.placeholder_tokens}
-          promptB: ${task_prompt.context_inpainting.placeholder_tokens}
-          prompt: "A cake on the table"
-          tradeoff: 0.7
-          negative_promptA: ${task_prompt.shape_inpainting.placeholder_tokens}
-          negative_promptB: ${task_prompt.context_inpainting.placeholder_tokens}
-          negative_prompt: ""
-
         - task: "context inpainting" # text-free context inpainting
           promptA: ${task_prompt.context_inpainting.placeholder_tokens}
           promptB: ${task_prompt.context_inpainting.placeholder_tokens}
@@ -111,6 +102,15 @@ validation_data:
           tradeoff: 1.0
           negative_promptA: ${task_prompt.object_inpainting.placeholder_tokens}
           negative_promptB: ${task_prompt.object_inpainting.placeholder_tokens}
+          negative_prompt: ""
+
+        - task: "shape_inpainting" # shape-guided object inpainting
+          promptA: ${task_prompt.shape_inpainting.placeholder_tokens}
+          promptB: ${task_prompt.context_inpainting.placeholder_tokens}
+          prompt: "A cake on the table"
+          tradeoff: 0.7
+          negative_promptA: ${task_prompt.shape_inpainting.placeholder_tokens}
+          negative_promptB: ${task_prompt.context_inpainting.placeholder_tokens}
           negative_prompt: ""
 
         - task: "t2i" # context-guided object remove

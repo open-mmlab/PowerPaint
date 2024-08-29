@@ -63,14 +63,14 @@ default_placeholder: false # set as true to avoid find unused_parameters
 learning_rate: 1e-5
 max_train_steps: 25e3            # max training steps
 train_batch_size: 64              # batch size per GPU
-dataloader_num_workers: 4
+dataloader_num_workers: 8
 gradient_accumulation_steps: 2
-
-gradient_checkpointing: true
-resume_from_checkpoint: "latest"
 
 lr_scheduler: "constant_with_warmup"
 lr_warmup_steps: 2000
+
+gradient_checkpointing: true
+resume_from_checkpoint: "latest"
 
 checkpointing_steps: 1e3
 validation_steps: 1e3
@@ -82,30 +82,31 @@ validation_data:
   data_root: "examples"
   cases:
     - image: "cake.jpg"
-      mask: "cake_object_mask.jpg"
+      mask: "cake_object_mask.png"
       prompt:
         - task: "object_inpainting" # text-guided object inpainting
-          promptA: ${task_prompt.object_inpainting.placeholder_tokens}
-          promptB: ${task_prompt.object_inpainting.placeholder_tokens}
-          promptU: "A cake on the table"
-          tradeoff: 1
-
-        - task: "shape_inpainting" # shape-guided object inpainting
-          promptA: ${task_prompt.shape_inpainting.placeholder_tokens}
-          promptB: ${task_prompt.context_inpainting.placeholder_tokens}
-          promptU: "A cake on the table"
-          tradeoff: 0.9
+          promptA: ${task_prompt.object_inpainting.placeholder_tokens} A cake on the table
+          promptB: ${task_prompt.object_inpainting.placeholder_tokens} A cake on the table
+          tradeoff: 1.0
 
         - task: "context inpainting" # text-free context inpainting
-          promptA: ${task_prompt.context_inpainting.placeholder_tokens}
-          promptB: ${task_prompt.context_inpainting.placeholder_tokens}
-          promptU: "high-quality"
-          tradeoff: 1
+          promptA: ${task_prompt.context_inpainting.placeholder_tokens} high-quality, beautiful
+          promptB: ${task_prompt.context_inpainting.placeholder_tokens} high-quality, beautiful
+          tradeoff: 1.0
 
         - task: "object_removal" # context-guided object remove
           promptA: ${task_prompt.context_inpainting.placeholder_tokens}
           promptB: ${task_prompt.context_inpainting.placeholder_tokens}
-          promptU: "high-quality"
-          tradeoff: 1
+          tradeoff: 1.0
           negative_promptA: ${task_prompt.object_inpainting.placeholder_tokens}
           negative_promptB: ${task_prompt.object_inpainting.placeholder_tokens}
+
+        - task: "shape_inpainting" # shape-guided object inpainting
+          promptA: ${task_prompt.shape_inpainting.placeholder_tokens} A cake on the table
+          promptB: ${task_prompt.context_inpainting.placeholder_tokens} A cake on the table
+          tradeoff: 0.5
+
+        - task: "t2i" # context-guided object remove
+          promptA: ${task_prompt.context_inpainting.placeholder_tokens} a blue cake on the table, high-quality
+          promptB: "${task_prompt.context_inpainting.placeholder_tokens} a blue cake on the table, high-quality"
+          tradeoff: 1.0

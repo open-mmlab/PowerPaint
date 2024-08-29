@@ -20,41 +20,59 @@ from powerpaint.pipelines import (
 )
 
 
-TASK_PROMPTS = {
-    "object-removal": {
-        "placeholder": "P_ctxt",
-    }
+# =======================================
+# use the same task prompt as training
+# =======================================
+TASK_LIST = ["text-guided", "object-removal", "image-outpainting", "shape-guided"]
+TASK_PROMPT = {
+    "ppt1": {
+        "text-guided": {"promptA": "P_obj {}", "promptB": "P_obj {}", "negative_promptA": "", "negative_promptB": ""},
+        "object-removal": {
+            "promptA": "P_ctxt",
+            "promptB": "P_ctxt",
+            "negative_promptA": "P_obj",
+            "negative_promptB": "P_obj",
+        },
+        "image-outpainting": {
+            "promptA": "P_ctxt",
+            "promptB": "P_ctxt",
+            "negative_promptA": "P_obj",
+            "negative_promptB": "P_obj",
+        },
+        "shape-guided": {
+            "promptA": "P_shape {}",
+            "promptB": "P_ctxt {}",
+            "negative_promptA": "P_shape {}",
+            "negative_promptB": "P_ctxt {}",
+        },
+    },
+    "ppt2": {
+        "text-guided": {
+            "promptA": "P_obj",
+            "promptB": "P_obj",
+            "negative_promptA": "P_obj",
+            "negative_promptB": "P_obj",
+        },
+        "object-removal": {
+            "promptA": "P_ctxt",
+            "promptB": "P_ctxt",
+            "negative_promptA": "P_obj",
+            "negative_promptB": "P_obj",
+        },
+        "image-outpainting": {
+            "promptA": "P_ctxt",
+            "promptB": "P_ctxt",
+            "negative_promptA": "P_obj",
+            "negative_promptB": "P_obj",
+        },
+        "shape-guided": {
+            "promptA": "P_shape",
+            "promptB": "P_ctxt",
+            "negative_promptA": "P_shape",
+            "negative_promptB": "P_ctxt",
+        },
+    },
 }
-
-
-def add_task(prompt, negative_prompt, control_type, version):
-    pos_prefix = neg_prefix = ""
-    if control_type == "object-removal" or control_type == "image-outpainting":
-        if version == "ppt1":
-            pos_prefix = "empty scene blur " + prompt
-            neg_prefix = negative_prompt
-        promptA = "P_ctxt " + pos_prefix
-        promptB = "P_ctxt " + pos_prefix
-        negative_promptA = neg_prefix + "P_obj "
-        negative_promptB = neg_prefix + "P_obj "
-    elif control_type == "shape-guided":
-        if version == "ppt1":
-            pos_prefix = prompt
-            neg_prefix = negative_prompt + ", worst quality, low quality, normal quality, bad quality, blurry "
-        promptA = pos_prefix + " P_shape"
-        promptB = pos_prefix + " P_ctxt"
-        negative_promptA = neg_prefix + "P_shape"
-        negative_promptB = neg_prefix + "P_ctxt"
-    else:
-        if version == "ppt1":
-            pos_prefix = prompt
-            neg_prefix = negative_prompt + ", worst quality, low quality, normal quality, bad quality, blurry "
-        promptA = pos_prefix + " P_obj"
-        promptB = pos_prefix + " P_obj"
-        negative_promptA = neg_prefix + "P_obj"
-        negative_promptB = neg_prefix + "P_obj"
-
-    return promptA, promptB, negative_promptA, negative_promptB
 
 
 class PowerPaintController:
@@ -273,165 +291,82 @@ class PowerPaintController:
 
     def predict(
         self,
-        input_image,
         task,
         prompt,
         negative_prompt,
+        promptA,
+        negative_promptA,
+        promptB,
+        negative_promptB,
         fitting_degree,
-        vertical_expansion_ratio,
-        horizontal_expansion_ratio,
-        ddim_steps,
-        scale,
-        seed,
+        input_image,
+        vertical_expansion_ratio=1,
+        horizontal_expansion_ratio=1,
+        ddim_steps=45,
+        scale=7.5,
+        seed=24,
     ):
         image, mask = input_image["image"].convert("RGB"), input_image["mask"].convert("RGB")
-        w, h = image.size
 
-        # processing images due to limited memory
+        # resizing images due to limited memory
+        w, h = image.size
         new_size = 640 if task != "image-outpainting" else 512
         image = (
             image.resize((new_size, int(h / w * new_size)))
             if w < h
             else image.resize((int(w / h * new_size), new_size))
         )
+        mask = mask.resize(image.size, Image.NEAREST)
+        w, h = image.size
+        hole_value = (0, 0, 0)
 
-        # preparing masks
-        if vertical_expansion_ratio is not None and horizontal_expansion_ratio is not None:
-            w2, h2 = int(horizontal_expansion_ratio * w), int(vertical_expansion_ratio * h)
+        # preparing masks for outpainting
+        if task == "image-outpainting":
+            if vertical_expansion_ratio != 1 or horizontal_expansion_ratio != 1:
+                w2, h2 = int(horizontal_expansion_ratio * w), int(vertical_expansion_ratio * h)
+                posw, posh = (w2 - w) // 2, (h2 - h) // 2
 
-            expand_img = Image.new("RGB", (w2, h2), (0, 0, 0))
-            expand_img.paste(image, (int((w2 - image.size[0]) / 2), int((h2 - image.size[1]) / 2)))
-            expand_img = np.ones((h2, w2, 3), dtype=np.uint8)
-            # original_img = np.array(input_image["image"])
-            # blury_gap = 10
+                image = Image.new("RGB", (w2, h2), hole_value).paste(image, (posw, posh))
+                mask = Image.new("RGB", (w2, h2), (255, 255, 255)).paste(mask, (posw, posh))
+                w, h = image.size
 
-        if self.version != "ppt1":
-            if task == "image-outpainting":
-                prompt = prompt + " empty scene"
-            if task == "object-removal":
-                prompt = prompt + " empty scene blur"
-        promptA, promptB, negative_promptA, negative_promptB = add_task(prompt, negative_prompt, task, self.version)
-        print(promptA, promptB, negative_promptA, negative_promptB)
+        # resizing to be divided by 8
+        w, h = w // 8 * 8, h // 8 * 8
+        image = image.resize((w, h))
+        mask = mask.resize((w, h))
+        masked_image = Image.composite(Image.new("RGB", (w, h), hole_value), image, mask.convert("L"))
 
-        W, H = int(w - w % 8), int(h - h % 8)
-        image = image.resize((H, W))
-        mask = mask.resize((H, W))
-        set_seed(seed)
+        # augment mask boundary for better blending results
+        # threshold = 0
+        # aug_mask = mask.filter(ImageFilter.GaussianBlur(radius=5)).convert('L')
+        # aug_mask = aug_mask.point(lambda p: 255 if p > threshold else 0).convert('L')
+        aug_mask = mask
 
-        result = self.pipe(
-            promptA=promptA,
-            promptB=promptB,
-            tradeoff=fitting_degree,
-            negative_promptA=negative_promptA,
-            negative_promptB=negative_promptB,
-            image=image,
-            mask=mask,
-            width=H,
-            height=W,
-            guidance_scale=scale,
-            num_inference_steps=ddim_steps,
-        ).images[0]
-
-        # for brushnet-based method
-        np_inpimg = np.array(input_image["image"])
-        np_inmask = np.array(input_image["mask"]) / 255.0
-        np_inpimg = np_inpimg * (1 - np_inmask)
-        input_image["image"] = Image.fromarray(np_inpimg.astype(np.uint8)).convert("RGB")
-        print(self.pipe.device, self.pipe.unet.device, self.pipe.brushnet.device, self.pipe.text_encoder.device)
         result = self.pipe(
             promptA=promptA,
             promptB=promptB,
             prompt=prompt,
-            tradeoff=fitting_degree,
-            image=input_image["image"].convert("RGB"),
-            mask=input_image["mask"].convert("RGB"),
-            num_inference_steps=ddim_steps,
-            generator=torch.Generator("cuda").manual_seed(seed),
-            brushnet_conditioning_scale=1.0,
             negative_promptA=negative_promptA,
             negative_promptB=negative_promptB,
             negative_prompt=negative_prompt,
+            tradeoff=fitting_degree,
+            # input masked_image and augmented mask
+            image=masked_image,
+            mask=aug_mask,
+            # default diffusion parameters
+            num_inference_steps=ddim_steps,
+            generator=torch.Generator("cuda").manual_seed(seed),
+            brushnet_conditioning_scale=1.0,
             guidance_scale=scale,
-            width=H,
-            height=W,
+            width=w,
+            height=h,
         ).images[0]
 
-        # highlighted inpainting results
-        mask_np = np.array(input_image["mask"].convert("RGB"))
-        result_m = np.array(result)
-        red = np.array(result).astype("float") * 1
-        red[:, :, 0] = 180.0
-        red[:, :, 2] = 0
-        red[:, :, 1] = 0
-        result_m = Image.fromarray(
-            (
-                result_m.astype("float") * (1 - mask_np.astype("float") / 512.0)
-                + mask_np.astype("float") / 512.0 * red
-            ).astype("uint8")
-        )
-
         # paste the inpainting results into original images
-        m_img = 255 - np.array(input_image["mask"].convert("RGB"))
-        m_img = Image.fromarray(m_img).filter(ImageFilter.GaussianBlur(radius=3))
-        m_img = 1.0 - np.asarray(m_img) / 255.0
-        m_img = np.asarray(m_img > 0).astype("float")
-        original_np = np.asarray(input_image["image"].convert("RGB")) / 255.0
-        ours_np = np.asarray(result) / 255.0
-        result_paste = ours_np * m_img + (1.0 - m_img) * original_np
-        result_paste = Image.fromarray(np.uint8(result_paste * 255))
-
-        # final output
-        dict_out = [input_image["image"].convert("RGB"), result_paste]  # [result]
-        dict_res = [input_image["mask"].convert("RGB"), result_m]
+        result_paste = Image.composite(result, image, aug_mask.convert("L"))
+        dict_out = [input_image["image"].convert("RGB"), result_paste]
+        dict_res = [input_image["mask"].convert("RGB"), result]
         return dict_out, dict_res
-
-    def infer(
-        self,
-        input_image,
-        task,
-        prompt,
-        negative_prompt,
-        fitting_degree,
-        vertical_expansion_ratio,
-        horizontal_expansion_ratio,
-        ddim_steps,
-        scale,
-        seed,
-        input_control_image=None,
-        control_type="canny",
-        controlnet_conditioning_scale=None,
-    ):
-        prompt = prompt[task]
-        negative_prompt = negative_prompt[task]
-        if task == "image-outpainting":
-            vertical_expansion_ratio = horizontal_expansion_ratio = None
-
-        # currently, we only support controlnet in PowerPaint-v1
-        if self.version == "ppt1" and task == "text-guided" and input_control_image is not None:
-            return self.predict_controlnet(
-                input_image,
-                input_control_image,
-                control_type,
-                prompt,
-                ddim_steps,
-                scale,
-                seed,
-                negative_prompt,
-                controlnet_conditioning_scale,
-            )
-        else:
-            return self.predict(
-                input_image,
-                task,
-                prompt,
-                negative_prompt,
-                fitting_degree,
-                vertical_expansion_ratio,
-                horizontal_expansion_ratio,
-                ddim_steps,
-                scale,
-                seed,
-            )
 
 
 def parse_args():
@@ -489,49 +424,41 @@ if __name__ == "__main__":
         # Attention: Due to network-related factors, the page may experience occasional bugs.
         # If the inpainting results deviate significantly from expectations,
         # consider toggling between task options to refresh the content.
-        prompt = {}
-        negative_prompt = {}
+        gr_task_radio = gr.Radio(TASK_LIST, value=TASK_LIST[0], show_label=False, visible=False)
+        gr_prompt = {}
+        gr_negative_prompt = {}
         with gr.Row():
             with gr.Column():
                 gr.Markdown("### Input image and draw mask")
                 input_image = gr.Image(source="upload", tool="sketch", type="pil")
 
-                task = gr.Radio(
-                    ["text-guided", "object-removal", "shape-guided", "image-outpainting"],
-                    show_label=False,
-                    visible=False,
-                )
-
                 # Text-guided object inpainting
                 with gr.Tab("Text-guided object inpainting") as tab_text_guided:
-                    task_type = "text-guided"
+                    task_type = TASK_LIST[0]
                     enable_text_guided = gr.Checkbox(
                         label="Enable text-guided object inpainting", value=True, interactive=False
                     )
-                    prompt[task_type] = gr.Textbox(label="Prompt")
-                    negative_prompt[task_type].append(gr.Textbox(label="negative_prompt"))
-                    tab_text_guided.select(fn=lambda: task_type, inputs=None, outputs=task)
+                    gr_prompt[task_type] = gr.Textbox(label="prompt")
+                    gr_negative_prompt[task_type] = gr.Textbox(label="negative_prompt")
 
                     # currently, we only support controlnet in PowerPaint-v1
-                    input_control_image = control_type = controlnet_conditioning_scale = None
-                    if args.version == "ppt1":
-                        gr.Markdown("### Controlnet setting")
-                        enable_control = gr.Checkbox(
-                            label="Enable controlnet", info="Enable this if you want to use controlnet"
-                        )
-                        controlnet_conditioning_scale = gr.Slider(
-                            label="controlnet conditioning scale",
-                            minimum=0,
-                            maximum=1,
-                            step=0.05,
-                            value=0.5,
-                        )
-                        control_type = gr.Radio(["canny", "pose", "depth", "hed"], label="Control type")
-                        input_control_image = gr.Image(source="upload", type="pil")
+                    controlnet_conditioning_scale = gr.Slider(
+                        minimum=0,
+                        maximum=1,
+                        step=0.05,
+                        value=0.5,
+                        label="controlnet conditioning scale",
+                        visible=args.version == "ppt1",
+                    )
+                    control_type = gr.Radio(
+                        ["canny", "pose", "depth", "hed"], label="Control type", visible=args.version == "ppt1"
+                    )
+                    input_control_image = gr.Image(source="upload", type="pil", visible=args.version == "ppt1")
+                tab_text_guided.select(fn=lambda: TASK_LIST[0], inputs=None, outputs=gr_task_radio)
 
                 # Object removal inpainting
                 with gr.Tab("Object removal inpainting") as tab_object_removal:
-                    task_type = "object-removal"
+                    task_type = TASK_LIST[1]
                     enable_object_removal = gr.Checkbox(
                         label="Enable object removal inpainting",
                         value=True,
@@ -540,13 +467,13 @@ if __name__ == "__main__":
                         you can address this by specifically increasing the Guidance Scale.",
                         interactive=True,
                     )
-                    prompt[task_type].append(gr.Textbox(label="Prompt"))
-                    negative_prompt[task_type] = gr.Textbox(label="negative_prompt")
-                    tab_object_removal.select(fn=lambda: task_type, inputs=None, outputs=task)
+                    gr_prompt[task_type] = gr.Textbox(label="prompt")
+                    gr_negative_prompt[task_type] = gr.Textbox(label="negative_prompt")
+                tab_object_removal.select(fn=lambda: TASK_LIST[1], inputs=None, outputs=gr_task_radio)
 
                 # image outpainting
                 with gr.Tab("Image outpainting") as tab_image_outpainting:
-                    task_type = "image-outpainting"
+                    task_type = TASK_LIST[2]
                     enable_object_removal_outpainting = gr.Checkbox(
                         label="Enable image outpainting",
                         value=True,
@@ -565,13 +492,14 @@ if __name__ == "__main__":
                     vertical_expansion_ratio = gr.Slider(
                         label="vertical expansion ratio", minimum=1, maximum=4, step=0.05, value=1
                     )
-                    prompt[task_type].append(gr.Textbox(label="Outpainting_prompt"))
-                    negative_prompt[task_type].append(gr.Textbox(label="Outpainting_negative_prompt"))
-                    tab_image_outpainting.select(fn=lambda: task_type, inputs=None, outputs=task)
+                    gr_prompt[task_type] = gr.Textbox(label="Outpainting_prompt")
+                    gr_negative_prompt[task_type] = gr.Textbox(label="Outpainting_negative_prompt")
+
+                tab_image_outpainting.select(fn=lambda: TASK_LIST[2], inputs=None, outputs=gr_task_radio)
 
                 # Shape-guided object inpainting
                 with gr.Tab("Shape-guided object inpainting") as tab_shape_guided:
-                    task_type = "shape-guided"
+                    task_type = TASK_LIST[3]
                     enable_shape_guided = gr.Checkbox(
                         label="Enable shape-guided object inpainting", value=True, interactive=False
                     )
@@ -582,9 +510,9 @@ if __name__ == "__main__":
                         step=0.05,
                         value=1,
                     )
-                    prompt[task_type].append(gr.Textbox(label="shape_guided_prompt"))
-                    negative_prompt[task_type].append(gr.Textbox(label="shape_guided_negative_prompt"))
-                    tab_shape_guided.select(fn=lambda: task_type, inputs=None, outputs=task)
+                    gr_prompt[task_type] = gr.Textbox(label="shape_guided_prompt")
+                    gr_negative_prompt[task_type] = gr.Textbox(label="shape_guided_negative_prompt")
+                tab_shape_guided.select(fn=lambda: TASK_LIST[3], inputs=None, outputs=gr_task_radio)
 
                 run_button = gr.Button(label="Run")
                 with gr.Accordion("Advanced options", open=False):
@@ -604,30 +532,96 @@ if __name__ == "__main__":
                         step=1,
                         randomize=True,
                     )
-
             with gr.Column():
                 gr.Markdown("### Inpainting result")
                 inpaint_result = gr.Gallery(label="Generated images", show_label=False, columns=2)
                 gr.Markdown("### Mask")
                 gallery = gr.Gallery(label="Generated masks", show_label=False, columns=2)
 
+        # =========================================
+        # passing parameters into function call
+        # =========================================
+        PROMPT_ARGS = list(gr_prompt.values()) + list(gr_negative_prompt.values())
+        prefix_args = [
+            input_image,
+            gr_task_radio,
+            fitting_degree,
+            vertical_expansion_ratio,
+            horizontal_expansion_ratio,
+            ddim_steps,
+            scale,
+            seed,
+            input_control_image,
+            control_type,
+            controlnet_conditioning_scale,
+        ]
+
+        def update_click(
+            input_image,
+            task,
+            fitting_degree,
+            vertical_expansion_ratio,
+            horizontal_expansion_ratio,
+            ddim_steps,
+            scale,
+            seed,
+            input_control_image,
+            control_type,
+            controlnet_conditioning_scale,
+            *prompt_args,
+        ):
+            # parse prompt arguments
+            prompt_args = list(prompt_args)
+            task_id = TASK_LIST.index(task)
+            input_prompt, input_negative_prompt = prompt_args[task_id], prompt_args[task_id + len(TASK_LIST)]
+
+            # parse task prompt
+            promptA = TASK_PROMPT[args.version][task]["promptA"].format(input_prompt)
+            promptB = TASK_PROMPT[args.version][task]["promptB"].format(input_prompt)
+            negative_promptA = TASK_PROMPT[args.version][task]["negative_promptA"].format(input_negative_prompt)
+            negative_promptB = TASK_PROMPT[args.version][task]["negative_promptB"].format(input_negative_prompt)
+            if args.version == "ppt1" and task == "text-guided" and input_control_image is not None:
+                return controller.predict_controlnet(
+                    task,
+                    input_prompt,
+                    input_negative_prompt,
+                    promptA,
+                    negative_promptA,
+                    promptB,
+                    negative_promptB,
+                    fitting_degree,
+                    input_image,
+                    input_control_image,
+                    control_type,
+                    input_prompt,
+                    input_negative_prompt,
+                    ddim_steps,
+                    scale,
+                    seed,
+                    controlnet_conditioning_scale,
+                )
+            else:
+                return controller.predict(
+                    task,
+                    input_prompt,
+                    input_negative_prompt,
+                    promptA,
+                    negative_promptA,
+                    promptB,
+                    negative_promptB,
+                    fitting_degree,
+                    input_image,
+                    vertical_expansion_ratio,
+                    horizontal_expansion_ratio,
+                    ddim_steps,
+                    scale,
+                    seed,
+                )
+
+        # set the buttons
         run_button.click(
-            fn=controller.infer,
-            inputs=[
-                input_image,
-                task,
-                prompt,
-                negative_prompt,
-                fitting_degree,
-                vertical_expansion_ratio,
-                horizontal_expansion_ratio,
-                ddim_steps,
-                scale,
-                seed,
-                input_control_image,
-                control_type,
-                controlnet_conditioning_scale,
-            ],
+            fn=update_click,
+            inputs=prefix_args + PROMPT_ARGS,
             outputs=[inpaint_result, gallery],
         )
 

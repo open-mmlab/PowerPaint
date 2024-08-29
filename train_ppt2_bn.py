@@ -123,8 +123,9 @@ def log_validation(tokenizer, text_encoder, brushnet, args, accelerator, weight_
         validation_mask = Image.open(os.path.join(args.validation_data.data_root, case.mask))
         validation_mask = validation_mask.resize((validation_image.size[0], validation_image.size[1]), Image.NEAREST)
         validation_mask = validation_mask.convert("L")
+        hole_value = (0, 0, 0)
         validation_image = Image.composite(
-            Image.new("RGB", (validation_image.size[0], validation_image.size[1]), (0, 0, 0)),
+            Image.new("RGB", (validation_image.size[0], validation_image.size[1]), hole_value),
             validation_image,
             validation_mask.convert("L"),
         )
@@ -143,10 +144,10 @@ def log_validation(tokenizer, text_encoder, brushnet, args, accelerator, weight_
                     promptA=p.promptA,
                     promptB=p.promptB,
                     prompt=p.prompt,
-                    tradeoff=p.tradeoff,
                     negative_promptA=p.negative_promptA,
                     negative_promptB=p.negative_promptB,
                     negative_prompt=p.negative_prompt,
+                    tradeoff=p.tradeoff,
                     image=validation_image if p.task != "t2i" else t2i_image,
                     mask=validation_mask if p.task != "t2i" else t2i_mask,
                     num_inference_steps=20,
@@ -842,6 +843,8 @@ def main(args):
                 # mask: 1 for masked regions and 0 for known regions
                 mask = torch.nn.functional.interpolate(batch["mask"], size=(64, 64))
                 mask_image = batch["pixel_values"] * (batch["mask"] < 0.5)
+                # convert the hole value from 0 to -1 due to [-1, 1] range
+                mask_image = mask_image - batch["mask"]
                 mask_image_latents = vae.encode(mask_image.to(weight_dtype)).latent_dist.sample()
                 mask_image_latents = (mask_image_latents * vae.config.scaling_factor).to(weight_dtype)
 

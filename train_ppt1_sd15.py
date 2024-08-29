@@ -37,11 +37,10 @@ from packaging import version
 from PIL import Image
 from torchvision import transforms
 from tqdm.auto import tqdm
-from transformers import CLIPTokenizer, PretrainedConfig
+from transformers import PretrainedConfig
 
 import diffusers
 import powerpaint.datasets
-from diffusers import AutoencoderKL, DDPMScheduler
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import EMAModel, compute_snr
 from diffusers.utils import check_min_version, deprecate, is_wandb_available
@@ -137,12 +136,11 @@ More information on all the CLI arguments and the environment are available on y
     model_card.save(os.path.join(repo_folder, "README.md"))
 
 
-def log_validation(vae, text_encoder, tokenizer, unet, args, accelerator, weight_dtype, step):
+def log_validation(tokenizer, text_encoder, unet, args, accelerator, weight_dtype, step):
     logger.info("Running validation... ")
 
     pipeline = StableDiffusionInpaintPipeline.from_pretrained(
         args.pretrained_model_name_or_path,
-        vae=vae,
         text_encoder=accelerator.unwrap_model(text_encoder),
         tokenizer=tokenizer,
         unet=accelerator.unwrap_model(unet),
@@ -163,9 +161,12 @@ def log_validation(vae, text_encoder, tokenizer, unet, args, accelerator, weight
     for case in args.validation_data.cases:
         validation_prompts = case.prompt
         validation_image = Image.open(os.path.join(args.validation_data.data_root, case.image)).convert("RGB")
-        validation_mask = Image.open(os.path.join(args.validation_data.data_root, case.mask)).convert("RGB")
+        validation_mask = Image.open(os.path.join(args.validation_data.data_root, case.mask))
+        validation_mask = validation_mask.resize((validation_image.size[0], validation_image.size[1]), Image.NEAREST)
+        validation_mask = validation_mask.convert("L")
+        hole_value = (0, 0, 0)
         validation_image = Image.composite(
-            Image.new("RGB", (validation_image.size[0], validation_image.size[1]), (0, 0, 0)),
+            Image.new("RGB", (validation_image.size[0], validation_image.size[1]), hole_value),
             validation_image,
             validation_mask.convert("L"),
         )
@@ -175,16 +176,18 @@ def log_validation(vae, text_encoder, tokenizer, unet, args, accelerator, weight
             (255, 255, 255),
         )
         image_grid.paste(validation_image, (0, 0))
+        t2i_mask = Image.new("RGB", (validation_image.size[0], validation_image.size[1]), (255, 255, 255)).convert("L")
+        t2i_image = Image.new("RGB", (validation_image.size[0], validation_image.size[1]), (0, 0, 0))
         for i, p in enumerate(validation_prompts):
             with torch.autocast(accelerator.device.type):
                 image = pipeline(
                     promptA=p.promptA,
                     promptB=p.promptB,
-                    tradeoff=p.tradeoff,
                     negative_promptA=p.get("negative_promptA", None),
                     negative_promptB=p.get("negative_promptB", None),
-                    image=validation_image,
-                    mask=validation_mask,
+                    tradeoff=p.tradeoff,
+                    image=validation_image if p.task != "t2i" else t2i_image,
+                    mask=validation_mask if p.task != "t2i" else t2i_mask,
                     num_inference_steps=20,
                 ).images[0]
             image_logs.append(image)
@@ -605,60 +608,15 @@ def main():
                 repo_id=args.hub_model_id or Path(args.output_dir).name, exist_ok=True, token=args.hub_token
             ).repo_id
 
-    # Load scheduler, tokenizer and models.
-    noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler")
-    tokenizer = CLIPTokenizer.from_pretrained(
-        args.pretrained_model_name_or_path,
-        subfolder="tokenizer",
-        revision=args.revision,
-    )
-
-    # import correct text encoder class
-    text_encoder_cls = import_model_class_from_model_name_or_path(args.pretrained_model_name_or_path, args.revision)
-    text_encoder = text_encoder_cls.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="text_encoder", revision=args.revision
-    )
-
-    vae = AutoencoderKL.from_pretrained(
-        args.pretrained_model_name_or_path, subfolder="vae", revision=args.revision, variant=args.variant
-    )
-
-    # add learnable tokens for task prompts into tokenizer
-    # adding dummy tokens for multi-vector
-    for name, task in args.task_prompt.items():
-        num_added_vectors, num_tries = 0, 0
-        added_placeholder_tokens = []
-        placeholder_tokens = task["placeholder_tokens"]
-        while True:
-            assert num_tries < 100, "Too many tries to add tokens. please use other placeholder token"
-            single_added_vector = tokenizer.add_tokens([placeholder_tokens])
-            # Successfully added new token
-            if single_added_vector == 1:
-                num_added_vectors += 1
-                added_placeholder_tokens.append(placeholder_tokens)
-            if num_added_vectors == task["num_vectors_per_token"]:
-                break
-            placeholder_tokens += f"_{num_added_vectors}"
-        # save the added placeholder_tokens
-        task["added_placeholder_tokens"] = added_placeholder_tokens
-
-        # convert the initializer_token and placeholder_token to ids
-        token_ids = tokenizer.encode(task["initializer_token"], add_special_tokens=False)
-        if len(token_ids) > 1:
-            raise ValueError("The initializer token should be a single token.")
-
-        initializer_token_id = token_ids[0]
-        placeholder_token_ids = tokenizer.convert_tokens_to_ids(added_placeholder_tokens)
-
-        # Resize the token embeddings as we are adding new special tokens to the tokenizer
-        text_encoder.resize_token_embeddings(len(tokenizer))
-        logger.info(f"Added {len(added_placeholder_tokens)} placeholder tokens for task {name}")
-
-        # Initialise the newly added placeholder token with the embeddings of the initializer token
-        token_embeds = text_encoder.get_input_embeddings().weight.data
-        with torch.no_grad():
-            for token_id in placeholder_token_ids:
-                token_embeds[token_id] = token_embeds[initializer_token_id].clone()
+    # For mixed precision training we cast all non-trainable weights (vae, non-lora text_encoder and non-lora unet) to half-precision
+    # as these weights are only used for inference, keeping weights in full precision is not required.
+    weight_dtype = torch.float32
+    if accelerator.mixed_precision == "fp16":
+        weight_dtype = torch.float16
+        args.mixed_precision = accelerator.mixed_precision
+    elif accelerator.mixed_precision == "bf16":
+        weight_dtype = torch.bfloat16
+        args.mixed_precision = accelerator.mixed_precision
 
     def extend_unet(unet_model, conv_in_channels):
         old_weights, old_bias = unet_model.conv_in.weight, unet_model.conv_in.bias
@@ -678,12 +636,32 @@ def main():
         unet_model.config.in_channels = conv_in_channels
         return unet_model
 
-    # extend unet to with five more channels in conv_in
-    unet = UNet2DConditionModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="unet")
-    unet = extend_unet(unet, 9)
+    # ==========================================
+    # setting models: load scheduler, tokenizer and models.
+    # ==========================================
+    text_encoder_cls = import_model_class_from_model_name_or_path(args.pretrained_model_name_or_path, args.revision)
+    pipe = StableDiffusionInpaintPipeline.from_pretrained(
+        args.pretrained_model_name_or_path,
+        revision=args.revision,
+        variant=args.variant,
+        torch_dtype=weight_dtype,
+        local_files_only=True,  # load files from local cache
+    )
 
-    vae.requires_grad_(False)
+    # extend unet to with five more channels in conv_in
+    pipe.unet = extend_unet(pipe.unet, 9)
+
+    # IMPORTANT: add learnable tokens for task prompts into tokenizer
+    placeholder_tokens = [v.placeholder_tokens for k, v in args.task_prompt.items()]
+    initializer_token = [v.initializer_token for k, v in args.task_prompt.items()]
+    num_vectors_per_token = [v.num_vectors_per_token for k, v in args.task_prompt.items()]
+    pipe.add_tokens(placeholder_tokens, initializer_token, num_vectors_per_token)
+
+    vae, tokenizer, noise_scheduler = pipe.vae, pipe.tokenizer, pipe.scheduler
+    text_encoder, unet = pipe.text_encoder.to(torch.float32), pipe.unet.to(torch.float32)
+
     # Freeze all parameters except for the token embeddings in text encoder
+    vae.requires_grad_(False)
     text_encoder.text_model.encoder.requires_grad_(False)
     text_encoder.text_model.final_layer_norm.requires_grad_(False)
     text_encoder.text_model.embeddings.position_embedding.requires_grad_(False)
@@ -797,7 +775,7 @@ def main():
     datasets_list = []
     for d in args.train_data.datasets:
         dataset_class = getattr(powerpaint.datasets, d.dataset_class)
-        dataset_ = dataset_class(train_transforms, tokenizer, args.task_prompt, **d)
+        dataset_ = dataset_class(train_transforms, pipe, args.task_prompt, **d)
         datasets_list.append({"dataset": dataset_, "prob": d.prob})
 
     train_dataset = ProbPickingDataset(datasets_list)
@@ -832,18 +810,7 @@ def main():
         unet, optimizer, train_dataloader, lr_scheduler, text_encoder
     )
 
-    # For mixed precision training we cast all non-trainable weights (vae, non-lora text_encoder and non-lora unet) to half-precision
-    # as these weights are only used for inference, keeping weights in full precision is not required.
-    weight_dtype = torch.float32
-    if accelerator.mixed_precision == "fp16":
-        weight_dtype = torch.float16
-        args.mixed_precision = accelerator.mixed_precision
-    elif accelerator.mixed_precision == "bf16":
-        weight_dtype = torch.bfloat16
-        args.mixed_precision = accelerator.mixed_precision
-
     # Move text_encode and vae to gpu and cast to weight_dtype
-    text_encoder.to(accelerator.device)
     vae.to(accelerator.device, dtype=weight_dtype)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
@@ -937,7 +904,9 @@ def main():
                 timesteps = timesteps.long()
 
                 # in mask, 1 for masked region, 0 for known region
-                mask_image = batch["pixel_values"] * (1.0 - batch["mask"])
+                mask_image = batch["pixel_values"] * (batch["mask"] < 0.5)
+                # convert the hole value from 0 to -1 due to value range [-1, 1]
+                mask_image = mask_image - batch["mask"]
                 mask_image_latents = vae.encode(mask_image.to(weight_dtype)).latent_dist.sample()
                 mask_image_latents = mask_image_latents * vae.config.scaling_factor
 
@@ -973,7 +942,7 @@ def main():
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
 
                 # Predict the noise residual and compute loss
-                model_pred = unet(model_input, timesteps, encoder_hidden_states, return_dict=False)[0]
+                model_pred = unet(model_input, timesteps, encoder_hidden_states.to(weight_dtype), return_dict=False)[0]
 
                 if args.snr_gamma is None:
                     loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
@@ -1044,9 +1013,8 @@ def main():
 
                     if hasattr(args, "validation_data") is not None and global_step % args.validation_steps == 0:
                         log_validation(
-                            vae,
-                            text_encoder,
                             tokenizer,
+                            text_encoder,
                             unet,
                             args,
                             accelerator,
@@ -1069,9 +1037,7 @@ def main():
         image_logs = []
         if hasattr(args, "validation_data"):
             logger.info("Running inference for collecting generated images...")
-            image_logs = log_validation(
-                vae, text_encoder, tokenizer, unet, args, accelerator, weight_dtype, global_step
-            )
+            image_logs = log_validation(tokenizer, text_encoder, unet, args, accelerator, weight_dtype, global_step)
 
         if args.push_to_hub:
             save_model_card(args, repo_id, image_logs, repo_folder=args.output_dir)
