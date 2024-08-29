@@ -155,14 +155,11 @@ Basically, we recommend to use 0.5-0.6 for fitting degree when you want to gener
 
 
 
-
-
-
-
-
 ## Training
 
-Stay tuned!
+Since we refactored the code for better support of both the U-Net-based and Brush-Net network architectures, please refer to our [`dev` branch](https://github.com/open-mmlab/PowerPaint/tree/dev?tab=readme-ov-file#training) for more details on training.
+
+If you have any issues, please feel free to [open issues](https://github.com/open-mmlab/PowerPaint/issues). Any [pull request](https://github.com/open-mmlab/PowerPaint/pulls) are welcome and we will review them asap.
 
 
 
