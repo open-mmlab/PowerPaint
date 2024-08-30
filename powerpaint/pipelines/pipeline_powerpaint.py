@@ -326,7 +326,6 @@ class StableDiffusionInpaintPipeline(
         do_classifier_free_guidance,
         negative_promptA=None,
         negative_promptB=None,
-        t_nag=None,
         prompt_embeds: Optional[torch.FloatTensor] = None,
         negative_prompt_embeds: Optional[torch.FloatTensor] = None,
         lora_scale: Optional[float] = None,
@@ -498,9 +497,7 @@ class StableDiffusionInpaintPipeline(
                 uncond_inputB.input_ids.to(device),
                 attention_mask=attention_mask,
             )
-            negative_prompt_embeds = negative_prompt_embedsA[0] * (t_nag) + (1 - t_nag) * negative_prompt_embedsB[0]
-
-            # negative_prompt_embeds = negative_prompt_embeds[0]
+            negative_prompt_embeds = t * negative_prompt_embedsA[0] + (1 - t) * negative_prompt_embedsB[0]
 
         if do_classifier_free_guidance:
             # duplicate unconditional embeddings for each generation per prompt, using mps friendly method
