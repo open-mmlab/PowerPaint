@@ -20,6 +20,7 @@ class CustomTextualInversionMixin(TextualInversionLoaderMixin):
         placeholder_tokens: Union[str, List[str]],
         initializer_tokens: Union[str, List[str]] = None,
         num_vectors_per_token: Union[int, List[int]] = 1,
+        initialize_parameters: bool = False,
     ):
         r"""Add token for training."""
         if not isinstance(placeholder_tokens, list):
@@ -38,9 +39,11 @@ class CustomTextualInversionMixin(TextualInversionLoaderMixin):
 
         # add tokens into tokenizer
         for p, i, n in zip(placeholder_tokens, initializer_tokens, num_vectors_per_token):
-            self._add_token(p, i, n)
+            self._add_token(p, i, n, initialize_parameters)
 
-    def _add_token(self, placeholder_token: str, initializer_token: str, num_vectors_per_token: int):
+    def _add_token(
+        self, placeholder_token: str, initializer_token: str, num_vectors_per_token: int, initialize_parameters: bool
+    ):
         r"""Add placeholder tokens to the tokenizer.
         borrowed from https://github.com/huggingface/diffusers/blob/main/
         examples/textual_inversion/textual_inversion.py#L669 # noqa
@@ -70,11 +73,13 @@ class CustomTextualInversionMixin(TextualInversionLoaderMixin):
         initializer_token_id = token_ids[0]
         placeholder_token_ids = self.tokenizer.convert_tokens_to_ids(placeholder_tokens)
 
-        # Resize the token embeddings as we are adding new special tokens to the tokenizer
-        self.text_encoder.resize_token_embeddings(len(self.tokenizer))
+        # skip initialization on text_encoder for trained models
+        if initialize_parameters:
+            # Resize the token embeddings as we are adding new special tokens to the tokenizer
+            self.text_encoder.resize_token_embeddings(len(self.tokenizer))
 
-        # Initialise the newly added placeholder token with the embeddings of the initializer token
-        token_embeds = self.text_encoder.get_input_embeddings().weight.data
-        with torch.no_grad():
-            for token_id in placeholder_token_ids:
-                token_embeds[token_id] = token_embeds[initializer_token_id].clone()
+            # Initialise the newly added placeholder token with the embeddings of the initializer token
+            token_embeds = self.text_encoder.get_input_embeddings().weight.data
+            with torch.no_grad():
+                for token_id in placeholder_token_ids:
+                    token_embeds[token_id] = token_embeds[initializer_token_id].clone()
