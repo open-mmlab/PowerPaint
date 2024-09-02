@@ -655,7 +655,7 @@ def main():
     placeholder_tokens = [v.placeholder_tokens for k, v in args.task_prompt.items()]
     initializer_token = [v.initializer_token for k, v in args.task_prompt.items()]
     num_vectors_per_token = [v.num_vectors_per_token for k, v in args.task_prompt.items()]
-    pipe.add_tokens(placeholder_tokens, initializer_token, num_vectors_per_token)
+    pipe.add_tokens(placeholder_tokens, initializer_token, num_vectors_per_token, initialize_parameters=True)
 
     vae, tokenizer, noise_scheduler = pipe.vae, pipe.tokenizer, pipe.scheduler
     text_encoder, unet = pipe.text_encoder.to(torch.float32), pipe.unet.to(torch.float32)

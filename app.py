@@ -26,46 +26,67 @@ from powerpaint.pipelines import (
 TASK_LIST = ["text-guided", "object-removal", "image-outpainting", "shape-guided"]
 TASK_PROMPT = {
     "ppt1": {
-        "text-guided": {"promptA": "P_obj {}", "promptB": "P_obj {}", "negative_promptA": "", "negative_promptB": ""},
+        "text-guided": {
+            "prompt": "",
+            "negative_prompt": "",
+            "promptA": "P_obj {}",
+            "promptB": "P_obj {}",
+            "negative_promptA": "{}, worst quality, low quality, normal quality, bad quality, blurry",
+            "negative_promptB": "{}, worst quality, low quality, normal quality, bad quality, blurry",
+        },
         "object-removal": {
-            "promptA": "P_ctxt",
-            "promptB": "P_ctxt",
-            "negative_promptA": "P_obj",
-            "negative_promptB": "P_obj",
+            "prompt": "",
+            "negative_prompt": "",
+            "promptA": "P_ctxt empty scene blur {}",
+            "promptB": "P_ctxt empty scene blur {}",
+            "negative_promptA": "P_obj {}",
+            "negative_promptB": "P_obj {}",
         },
         "image-outpainting": {
-            "promptA": "P_ctxt",
-            "promptB": "P_ctxt",
-            "negative_promptA": "P_obj",
-            "negative_promptB": "P_obj",
+            "prompt": "",
+            "negative_prompt": "",
+            "promptA": "P_ctxt empty scene blur {}",
+            "promptB": "P_ctxt empty scene blur {}",
+            "negative_promptA": "P_obj {}",
+            "negative_promptB": "P_obj {}",
         },
         "shape-guided": {
+            "prompt": "",
+            "negative_prompt": "",
             "promptA": "P_shape {}",
             "promptB": "P_ctxt {}",
-            "negative_promptA": "P_shape {}",
-            "negative_promptB": "P_ctxt {}",
+            "negative_promptA": "P_shape {}, worst quality, low quality, normal quality, bad quality, blurry",
+            "negative_promptB": "P_ctxt {}, worst quality, low quality, normal quality, bad quality, blurry",
         },
     },
     "ppt2": {
         "text-guided": {
+            "prompt": "{}",
+            "negative_prompt": "{}, worst quality, low quality, normal quality, bad quality, blurry",
             "promptA": "P_obj",
             "promptB": "P_obj",
             "negative_promptA": "P_obj",
             "negative_promptB": "P_obj",
         },
         "object-removal": {
+            "prompt": "{} empty scene blur",
+            "negative_prompt": "{}, worst quality, low quality, normal quality, bad quality, blurry",
             "promptA": "P_ctxt",
             "promptB": "P_ctxt",
             "negative_promptA": "P_obj",
             "negative_promptB": "P_obj",
         },
         "image-outpainting": {
+            "prompt": "{} empty scene blur",
+            "negative_prompt": "{}, worst quality, low quality, normal quality, bad quality, blurry",
             "promptA": "P_ctxt",
             "promptB": "P_ctxt",
             "negative_promptA": "P_obj",
             "negative_promptB": "P_obj",
         },
         "shape-guided": {
+            "prompt": "{}",
+            "negative_prompt": "{}, worst quality, low quality, normal quality, bad quality, blurry",
             "promptA": "P_shape",
             "promptB": "P_ctxt",
             "negative_promptA": "P_shape",
@@ -126,10 +147,14 @@ class PowerPaintController:
                 safety_checker=None,
             )
 
+        # IMPORTANT:
+        # 1. Add tokens in the same order and placeholder with training
+        # 2. set initilize_parameters to False to avoid reinitializing the model
         self.pipe.add_tokens(
-            placeholder_tokens=["P_ctxt", "P_shape", "P_obj"],
+            placeholder_tokens=["P_obj", "P_ctxt", "P_shape"],
             initializer_tokens=["a", "a", "a"],
             num_vectors_per_token=10,
+            initialize_parameters=False,
         )
 
         self.pipe.enable_model_cpu_offload()
@@ -326,8 +351,12 @@ class PowerPaintController:
                 w2, h2 = int(horizontal_expansion_ratio * w), int(vertical_expansion_ratio * h)
                 posw, posh = (w2 - w) // 2, (h2 - h) // 2
 
-                image = Image.new("RGB", (w2, h2), hole_value).paste(image, (posw, posh))
-                mask = Image.new("RGB", (w2, h2), (255, 255, 255)).paste(mask, (posw, posh))
+                new_image = Image.new("RGB", (w2, h2), hole_value)
+                new_image.paste(image, (posw, posh))
+                image = new_image
+                new_mask = Image.new("RGB", (w2, h2), (255, 255, 255))
+                new_mask.paste(mask, (posw, posh))
+                mask = new_mask
                 w, h = image.size
 
         # resizing to be divided by 8
@@ -576,8 +605,10 @@ if __name__ == "__main__":
             input_prompt, input_negative_prompt = prompt_args[task_id], prompt_args[task_id + len(TASK_LIST)]
 
             # parse task prompt
+            input_prompt = TASK_PROMPT[args.version][task]["prompt"].format(input_prompt)
             promptA = TASK_PROMPT[args.version][task]["promptA"].format(input_prompt)
             promptB = TASK_PROMPT[args.version][task]["promptB"].format(input_prompt)
+            input_negative_prompt = TASK_PROMPT[args.version][task]["negative_prompt"].format(input_negative_prompt)
             negative_promptA = TASK_PROMPT[args.version][task]["negative_promptA"].format(input_negative_prompt)
             negative_promptB = TASK_PROMPT[args.version][task]["negative_promptB"].format(input_negative_prompt)
             if args.version == "ppt1" and task == "text-guided" and input_control_image is not None:
