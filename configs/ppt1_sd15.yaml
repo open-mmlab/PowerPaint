@@ -67,8 +67,8 @@ lr_warmup_steps: 2000
 gradient_checkpointing: true
 resume_from_checkpoint: "latest"
 
-checkpointing_steps: 1e3
-validation_steps: 1e3
+checkpointing_steps: 100 #1e3
+validation_steps: 100 #1e3
 checkpoints_total_limit: 5
 
 

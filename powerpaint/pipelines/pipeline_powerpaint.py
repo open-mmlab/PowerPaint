@@ -948,6 +948,7 @@ class StableDiffusionInpaintPipeline(
         # 6. Prepare latent variables
         num_channels_latents = self.vae.config.latent_channels
         num_channels_unet = self.unet.config.in_channels
+        print(f"num_channels_unet: {num_channels_unet}")
         return_image_latents = num_channels_unet == 4
 
         latents_outputs = self.prepare_latents(
