@@ -24,7 +24,6 @@ from pathlib import Path
 import accelerate
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint
 import transformers
@@ -139,7 +138,7 @@ More information on all the CLI arguments and the environment are available on y
 def log_validation(tokenizer, text_encoder, unet, args, accelerator, weight_dtype, step):
     logger.info("Running validation... ")
 
-    pipeline = StableDiffusionInpaintPipeline.from_pretrained(
+    pipe = StableDiffusionInpaintPipeline.from_pretrained(
         args.pretrained_model_name_or_path,
         text_encoder=accelerator.unwrap_model(text_encoder),
         tokenizer=tokenizer,
@@ -150,11 +149,11 @@ def log_validation(tokenizer, text_encoder, unet, args, accelerator, weight_dtyp
         torch_dtype=weight_dtype,
         local_files_only=True,  # load files from local cache
     )
-    pipeline = pipeline.to(accelerator.device)
-    pipeline.set_progress_bar_config(disable=True)
+    pipe = pipe.to(accelerator.device)
+    pipe.set_progress_bar_config(disable=True)
 
     if args.enable_xformers_memory_efficient_attention:
-        pipeline.enable_xformers_memory_efficient_attention()
+        pipe.enable_xformers_memory_efficient_attention()
 
     # load validation images
     image_logs = []
@@ -180,7 +179,7 @@ def log_validation(tokenizer, text_encoder, unet, args, accelerator, weight_dtyp
         t2i_image = Image.new("RGB", (validation_image.size[0], validation_image.size[1]), (0, 0, 0))
         for i, p in enumerate(validation_prompts):
             with torch.autocast(accelerator.device.type):
-                image = pipeline(
+                image = pipe(
                     promptA=p.promptA,
                     promptB=p.promptB,
                     negative_promptA=p.get("negative_promptA", None),
@@ -212,7 +211,7 @@ def log_validation(tokenizer, text_encoder, unet, args, accelerator, weight_dtyp
         else:
             logger.warning(f"image logging not implemented for {tracker.name}")
 
-    del pipeline
+    del pipe
     torch.cuda.empty_cache()
 
     return image_logs
@@ -618,24 +617,6 @@ def main():
         weight_dtype = torch.bfloat16
         args.mixed_precision = accelerator.mixed_precision
 
-    def extend_unet(unet_model, conv_in_channels):
-        old_weights, old_bias = unet_model.conv_in.weight, unet_model.conv_in.bias
-        new_conv1 = nn.Conv2d(
-            conv_in_channels,
-            old_weights.shape[0],
-            kernel_size=unet_model.conv_in.kernel_size,
-            stride=unet_model.conv_in.stride,
-            padding=unet_model.conv_in.padding,
-            bias=True if old_bias is not None else False,
-        )
-        param = torch.zeros((320, 5, 3, 3), requires_grad=True)
-        new_conv1.weight = nn.Parameter(torch.cat((old_weights, param), dim=1))
-        if old_bias is not None:
-            new_conv1.bias = old_bias
-        unet_model.conv_in = new_conv1
-        unet_model.config.in_channels = conv_in_channels
-        return unet_model
-
     # ==========================================
     # setting models: load scheduler, tokenizer and models.
     # ==========================================
@@ -648,14 +629,11 @@ def main():
         local_files_only=True,  # load files from local cache
     )
 
-    # extend unet to with five more channels in conv_in
-    pipe.unet = extend_unet(pipe.unet, 9)
-
     # IMPORTANT: add learnable tokens for task prompts into tokenizer
     placeholder_tokens = [v.placeholder_tokens for k, v in args.task_prompt.items()]
     initializer_token = [v.initializer_token for k, v in args.task_prompt.items()]
     num_vectors_per_token = [v.num_vectors_per_token for k, v in args.task_prompt.items()]
-    pipe.add_tokens(placeholder_tokens, initializer_token, num_vectors_per_token)
+    pipe.add_tokens(placeholder_tokens, initializer_token, num_vectors_per_token, initialize_parameters=True)
 
     vae, tokenizer, noise_scheduler = pipe.vae, pipe.tokenizer, pipe.scheduler
     text_encoder, unet = pipe.text_encoder.to(torch.float32), pipe.unet.to(torch.float32)
@@ -669,9 +647,14 @@ def main():
     # Create EMA for the unet.
     if args.use_ema:
         ema_unet = UNet2DConditionModel.from_pretrained(
-            args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision, variant=args.variant
+            args.pretrained_model_name_or_path,
+            in_channels=9,
+            subfolder="unet",
+            revision=args.revision,
+            variant=args.variant,
+            low_cpu_mem_usage=False,
+            ignore_mismatched_sizes=True,
         )
-        ema_unet = extend_unet(ema_unet, 9)
         ema_unet = EMAModel(ema_unet.parameters(), model_cls=UNet2DConditionModel, model_config=ema_unet.config)
 
     if args.enable_xformers_memory_efficient_attention:
@@ -726,6 +709,7 @@ def main():
 
     if args.gradient_checkpointing:
         unet.train()
+        text_encoder.train()
         text_encoder.gradient_checkpointing_enable()
         unet.enable_gradient_checkpointing()
 
@@ -806,8 +790,8 @@ def main():
 
     text_encoder.train()
     # Prepare everything with our `accelerator`.
-    unet, optimizer, train_dataloader, lr_scheduler, text_encoder = accelerator.prepare(
-        unet, optimizer, train_dataloader, lr_scheduler, text_encoder
+    unet, text_encoder, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+        unet, text_encoder, optimizer, train_dataloader, lr_scheduler
     )
 
     # Move text_encode and vae to gpu and cast to weight_dtype
@@ -881,6 +865,8 @@ def main():
         disable=not accelerator.is_local_main_process,
     )
 
+    unet.train()
+    text_encoder.train()
     for _ in range(first_epoch, args.num_train_epochs):
         train_loss = 0.0
         for batch in train_dataloader:
@@ -1031,8 +1017,6 @@ def main():
     # Create the pipeline using the trained modules and save it.
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
-        unet = accelerator.unwrap_model(unet)
-
         # Run a final round of inference.
         image_logs = []
         if hasattr(args, "validation_data"):
