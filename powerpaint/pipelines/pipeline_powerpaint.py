@@ -155,6 +155,28 @@ def prepare_mask_and_masked_image(image, mask, height, width, return_image: bool
     return mask, masked_image
 
 
+def extend_unet(unet_model, conv_in_channels):
+    old_weights, old_bias = unet_model.conv_in.weight, unet_model.conv_in.bias
+    new_conv1 = torch.nn.Conv2d(
+        conv_in_channels,
+        old_weights.shape[0],
+        kernel_size=unet_model.conv_in.kernel_size,
+        stride=unet_model.conv_in.stride,
+        padding=unet_model.conv_in.padding,
+        bias=True if old_bias is not None else False,
+    )
+    param = torch.zeros((320, 5, 3, 3), requires_grad=True)
+    new_conv1.weight = torch.nn.Parameter(torch.cat((old_weights, param), dim=1))
+    if old_bias is not None:
+        new_conv1.bias = old_bias
+    unet_model.conv_in = new_conv1
+
+    new_config = dict(unet_model.config)
+    new_config["in_channels"] = 9
+    unet_model._internal_dict = FrozenDict(new_config)
+    return unet_model
+
+
 class StableDiffusionInpaintPipeline(
     DiffusionPipeline, CustomTextualInversionMixin, LoraLoaderMixin, FromSingleFileMixin
 ):
@@ -270,8 +292,12 @@ class StableDiffusionInpaintPipeline(
             unet._internal_dict = FrozenDict(new_config)
 
         # Check shapes, assume num_channels_latents == 4, num_channels_mask == 1, num_channels_masked == 4
+        logger.info(f"You have loaded a UNet with {unet.config.in_channels} input channels.")
         if unet.config.in_channels != 9:
-            logger.info(f"You have loaded a UNet with {unet.config.in_channels} input channels which.")
+            unet = extend_unet(unet, 9)
+            logger.info(
+                f"Extend the U-Net to in_channels={unet.config.in_channels} for taking condition into account."
+            )
 
         self.register_modules(
             vae=vae,
@@ -922,6 +948,7 @@ class StableDiffusionInpaintPipeline(
         # 6. Prepare latent variables
         num_channels_latents = self.vae.config.latent_channels
         num_channels_unet = self.unet.config.in_channels
+        print(f"num_channels_unet: {num_channels_unet}")
         return_image_latents = num_channels_unet == 4
 
         latents_outputs = self.prepare_latents(

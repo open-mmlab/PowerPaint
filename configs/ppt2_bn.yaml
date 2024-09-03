@@ -54,9 +54,6 @@ train_data:
       bufsize: null
       resolution: 512
 
-
-default_placeholder: true # set as true to avoid find unused_parameters
-
 # training hyper-parameters
 learning_rate: 1e-5
 max_train_steps: 300e3           # max training steps

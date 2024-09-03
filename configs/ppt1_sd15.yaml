@@ -3,7 +3,6 @@ output_dir: "runs/ppt1_sd15"
 tracker_project_name: "ppt1_sd15"
 report_to: "tensorboard"
 
-
 # learnable task prompts
 task_prompt:
   object_inpainting:
@@ -55,10 +54,6 @@ train_data:
       bufsize: null
       resolution: 512
 
-
-default_placeholder: false # set as true to avoid find unused_parameters
-
-
 # training hyper-parameters
 learning_rate: 1e-5
 max_train_steps: 25e3            # max training steps
@@ -72,9 +67,9 @@ lr_warmup_steps: 2000
 gradient_checkpointing: true
 resume_from_checkpoint: "latest"
 
-checkpointing_steps: 1e3
-validation_steps: 1e3
-checkpoints_total_limit: 10
+checkpointing_steps: 100 #1e3
+validation_steps: 100 #1e3
+checkpoints_total_limit: 5
 
 
 # validation data
@@ -88,11 +83,15 @@ validation_data:
           promptA: ${task_prompt.object_inpainting.placeholder_tokens} A cake on the table
           promptB: ${task_prompt.object_inpainting.placeholder_tokens} A cake on the table
           tradeoff: 1.0
+          negative_promptA: ""
+          negative_promptB: ""
 
         - task: "context inpainting" # text-free context inpainting
-          promptA: ${task_prompt.context_inpainting.placeholder_tokens} high-quality, beautiful
-          promptB: ${task_prompt.context_inpainting.placeholder_tokens} high-quality, beautiful
+          promptA: ${task_prompt.context_inpainting.placeholder_tokens} empty blur scene
+          promptB: ${task_prompt.context_inpainting.placeholder_tokens} empty blur scene
           tradeoff: 1.0
+          negative_promptA: ""
+          negative_promptB: ""
 
         - task: "object_removal" # context-guided object remove
           promptA: ${task_prompt.context_inpainting.placeholder_tokens}
@@ -105,8 +104,12 @@ validation_data:
           promptA: ${task_prompt.shape_inpainting.placeholder_tokens} A cake on the table
           promptB: ${task_prompt.context_inpainting.placeholder_tokens} A cake on the table
           tradeoff: 0.5
+          negative_promptA: ""
+          negative_promptB: ""
 
         - task: "t2i" # context-guided object remove
           promptA: ${task_prompt.context_inpainting.placeholder_tokens} a blue cake on the table, high-quality
           promptB: "${task_prompt.context_inpainting.placeholder_tokens} a blue cake on the table, high-quality"
           tradeoff: 1.0
+          negative_promptA: ""
+          negative_promptB: ""

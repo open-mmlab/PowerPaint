@@ -10,7 +10,6 @@ from controlnet_aux import HEDdetector, OpenposeDetector
 from PIL import Image, ImageFilter
 from transformers import CLIPTextModel, DPTFeatureExtractor, DPTForDepthEstimation
 
-import diffusers
 from diffusers.pipelines.controlnet.pipeline_controlnet import ControlNetModel
 from powerpaint.models import BrushNetModel, UNet2DConditionModel
 from powerpaint.pipelines import (
@@ -109,22 +108,31 @@ class PowerPaintController:
         # initialize powerpaint pipeline
         if version == "ppt1":
             self.pipe = StableDiffusionInpaintPipeline.from_pretrained(
-                "runwayml/stable-diffusion-inpainting",
-                unet=diffusers.UNet2DConditionModel.from_pretrained(self.pretrained_model_path, subfolder="unet").to(
-                    "cuda"
-                ),
-                text_encoder=CLIPTextModel.from_pretrained(self.pretrained_model_path, subfolder="text_encoder").to(
-                    "cuda"
-                ),
+                self.base_model_path,
+                unet=UNet2DConditionModel.from_pretrained(
+                    self.pretrained_model_path,
+                    in_channels=9,
+                    subfolder="unet",
+                    local_files_only=local_files_only,
+                    torch_dtype=weight_dtype,
+                ).to("cuda"),
+                text_encoder=CLIPTextModel.from_pretrained(
+                    self.pretrained_model_path,
+                    subfolder="text_encoder",
+                    torch_dtype=weight_dtype,
+                    local_files_only=local_files_only,
+                ).to("cuda"),
                 torch_dtype=weight_dtype,
                 local_files_only=local_files_only,
+                safety_checker=None,
             )
         else:
             # brushnet-based version
             self.pipe = StableDiffusionPowerPaintBrushNetPipeline.from_pretrained(
-                "checkpoints/realisticVisionV60B1_v51VAE",
+                self.base_model_path,
                 unet=UNet2DConditionModel.from_pretrained(
-                    "checkpoints/realisticVisionV60B1_v51VAE",
+                    self.base_model_path,
+                    in_channels=4,
                     subfolder="unet",
                     revision=None,
                     torch_dtype=weight_dtype,
@@ -401,7 +409,7 @@ class PowerPaintController:
 def parse_args():
     args = argparse.ArgumentParser()
     args.add_argument("--pretrained_model_path", type=str, required=True)
-    args.add_argument("--base_model_path", type=str, default="")
+    args.add_argument("--base_model_path", type=str, default=None)
     args.add_argument("--weight_dtype", type=str, default="float16")
     args.add_argument("--share", action="store_true")
     args.add_argument(
