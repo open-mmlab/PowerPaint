@@ -38,8 +38,12 @@ class CustomTextualInversionMixin(TextualInversionLoaderMixin):
         ), "placeholder_token should be the same length as initialize_token"
 
         # add tokens into tokenizer
+        new_embeds_ids = []
         for p, i, n in zip(placeholder_tokens, initializer_tokens, num_vectors_per_token):
-            self._add_token(p, i, n, initialize_parameters)
+            new_ids = self._add_token(p, i, n, initialize_parameters)
+            new_embeds_ids += new_ids
+
+        return sorted(new_embeds_ids)
 
     def _add_token(
         self, placeholder_token: str, initializer_token: str, num_vectors_per_token: int, initialize_parameters: bool
@@ -83,3 +87,5 @@ class CustomTextualInversionMixin(TextualInversionLoaderMixin):
             with torch.no_grad():
                 for token_id in placeholder_token_ids:
                     token_embeds[token_id] = token_embeds[initializer_token_id].clone()
+
+        return placeholder_token_ids

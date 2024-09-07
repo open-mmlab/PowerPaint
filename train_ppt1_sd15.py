@@ -623,9 +623,14 @@ def main():
     text_encoder_cls = import_model_class_from_model_name_or_path(args.pretrained_model_name_or_path, args.revision)
     pipe = StableDiffusionInpaintPipeline.from_pretrained(
         args.pretrained_model_name_or_path,
+        unet=UNet2DConditionModel.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder="unet",
+            revision=args.revision,
+            variant=args.variant,
+        ),
         revision=args.revision,
         variant=args.variant,
-        torch_dtype=weight_dtype,
         local_files_only=True,  # load files from local cache
     )
 
@@ -633,13 +638,16 @@ def main():
     placeholder_tokens = [v.placeholder_tokens for k, v in args.task_prompt.items()]
     initializer_token = [v.initializer_token for k, v in args.task_prompt.items()]
     num_vectors_per_token = [v.num_vectors_per_token for k, v in args.task_prompt.items()]
-    pipe.add_tokens(placeholder_tokens, initializer_token, num_vectors_per_token, initialize_parameters=True)
+    placeholder_token_ids = pipe.add_tokens(
+        placeholder_tokens, initializer_token, num_vectors_per_token, initialize_parameters=True
+    )
 
     vae, tokenizer, noise_scheduler = pipe.vae, pipe.tokenizer, pipe.scheduler
     text_encoder, unet = pipe.text_encoder.to(torch.float32), pipe.unet.to(torch.float32)
 
     # Freeze all parameters except for the token embeddings in text encoder
     vae.requires_grad_(False)
+    text_encoder.text_model.requires_grad_(True)
     text_encoder.text_model.encoder.requires_grad_(False)
     text_encoder.text_model.final_layer_norm.requires_grad_(False)
     text_encoder.text_model.embeddings.position_embedding.requires_grad_(False)
@@ -647,13 +655,7 @@ def main():
     # Create EMA for the unet.
     if args.use_ema:
         ema_unet = UNet2DConditionModel.from_pretrained(
-            args.pretrained_model_name_or_path,
-            in_channels=9,
-            subfolder="unet",
-            revision=args.revision,
-            variant=args.variant,
-            low_cpu_mem_usage=False,
-            ignore_mismatched_sizes=True,
+            args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision, variant=args.variant
         )
         ema_unet = EMAModel(ema_unet.parameters(), model_cls=UNet2DConditionModel, model_config=ema_unet.config)
 
@@ -698,7 +700,7 @@ def main():
                     model.config = load_model.config
                 else:
                     # load diffusers style into model
-                    load_model = UNet2DConditionModel.from_pretrained(input_dir, in_channels=9, subfolder="unet")
+                    load_model = UNet2DConditionModel.from_pretrained(input_dir, subfolder="unet")
                     model.register_to_config(**load_model.config)
 
                 model.load_state_dict(load_model.state_dict())
@@ -709,7 +711,6 @@ def main():
 
     if args.gradient_checkpointing:
         unet.train()
-        text_encoder.train()
         text_encoder.gradient_checkpointing_enable()
         unet.enable_gradient_checkpointing()
 
@@ -867,6 +868,9 @@ def main():
 
     unet.train()
     text_encoder.train()
+    # keep original embeddings as reference
+    orig_embeds_params = accelerator.unwrap_model(text_encoder).get_input_embeddings().weight.data.clone()
+
     for _ in range(first_epoch, args.num_train_epochs):
         train_loss = 0.0
         for batch in train_dataloader:
@@ -914,6 +918,7 @@ def main():
                 encoder_hidden_states = (
                     tradeoff[:, 0:1, :] * encoder_hidden_statesA + tradeoff[:, 1:, :] * encoder_hidden_statesB.detach()
                 )
+                encoder_hidden_states = encoder_hidden_states.to(accelerator.unwrap_model(unet).dtype)
 
                 # Get the target for loss depending on the prediction type
                 if args.prediction_type is not None:
@@ -927,8 +932,14 @@ def main():
                 else:
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
 
+                # print(
+                #     f"weight_dtype: {weight_dtype}, "
+                #     f"embedding: {encoder_hidden_states.dtype}, "
+                #     f"text encoder: {accelerator.unwrap_model(text_encoder).dtype},"
+                #     f"unet: {accelerator.unwrap_model(unet).dtype},"
+                # )
                 # Predict the noise residual and compute loss
-                model_pred = unet(model_input, timesteps, encoder_hidden_states.to(weight_dtype), return_dict=False)[0]
+                model_pred = unet(model_input, timesteps, encoder_hidden_states, return_dict=False)[0]
 
                 if args.snr_gamma is None:
                     loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
@@ -962,6 +973,16 @@ def main():
                 lr_scheduler.step()
                 optimizer.zero_grad()
 
+                # Let's make sure we don't update any embedding weights besides the newly added token
+                index_no_updates = torch.ones((len(tokenizer),), dtype=torch.bool)
+                index_no_updates[min(placeholder_token_ids) : max(placeholder_token_ids) + 1] = False
+
+                with torch.no_grad():
+                    accelerator.unwrap_model(text_encoder).get_input_embeddings().weight[index_no_updates] = (
+                        orig_embeds_params[index_no_updates]
+                    )
+
+                # pdb.set_trace()
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
                 if args.use_ema:
