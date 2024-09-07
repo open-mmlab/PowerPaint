@@ -22,9 +22,9 @@ from transformers import CLIPImageProcessor, CLIPTextModel, CLIPTokenizer
 
 from diffusers.configuration_utils import FrozenDict
 from diffusers.image_processor import VaeImageProcessor
-from diffusers.loaders import FromSingleFileMixin, LoraLoaderMixin
+from diffusers.loaders import FromSingleFileMixin, IPAdapterMixin, LoraLoaderMixin
 from diffusers.models import AsymmetricAutoencoderKL, AutoencoderKL, UNet2DConditionModel
-from diffusers.pipelines.pipeline_utils import DiffusionPipeline
+from diffusers.pipelines.pipeline_utils import DiffusionPipeline, StableDiffusionMixin
 from diffusers.pipelines.stable_diffusion import StableDiffusionPipelineOutput
 from diffusers.pipelines.stable_diffusion.safety_checker import StableDiffusionSafetyChecker
 from diffusers.schedulers import KarrasDiffusionSchedulers
@@ -105,7 +105,12 @@ def retrieve_timesteps(
 
 
 class StableDiffusionInpaintPipeline(
-    DiffusionPipeline, CustomTextualInversionMixin, LoraLoaderMixin, FromSingleFileMixin
+    DiffusionPipeline,
+    StableDiffusionMixin,
+    CustomTextualInversionMixin,
+    LoraLoaderMixin,
+    IPAdapterMixin,
+    FromSingleFileMixin,
 ):
     r"""
     Pipeline for text-guided image inpainting using Stable Diffusion.
@@ -619,6 +624,29 @@ class StableDiffusionInpaintPipeline(
 
         return timesteps, num_inference_steps - t_start
 
+    @property
+    def guidance_scale(self):
+        return self._guidance_scale
+
+    @property
+    def clip_skip(self):
+        return self._clip_skip
+
+    # here `guidance_scale` is defined analog to the guidance weight `w` of equation (2)
+    # of the Imagen paper: https://arxiv.org/pdf/2205.11487.pdf . `guidance_scale = 1`
+    # corresponds to doing no classifier free guidance.
+    @property
+    def do_classifier_free_guidance(self):
+        return self._guidance_scale > 1 and self.unet.config.time_cond_proj_dim is None
+
+    @property
+    def cross_attention_kwargs(self):
+        return self._cross_attention_kwargs
+
+    @property
+    def num_timesteps(self):
+        return self._num_timesteps
+
     @torch.no_grad()
     def __call__(
         self,
@@ -647,6 +675,7 @@ class StableDiffusionInpaintPipeline(
         callback_steps: int = 1,
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
         task_class: Union[torch.Tensor, float, int] = None,
+        clip_skip: Optional[int] = None,
         **kwargs,
     ):
         r"""
@@ -768,6 +797,10 @@ class StableDiffusionInpaintPipeline(
             prompt_embeds,
             negative_prompt_embeds,
         )
+
+        self._guidance_scale = guidance_scale
+        self._clip_skip = clip_skip
+        self._cross_attention_kwargs = cross_attention_kwargs
 
         # 2. Define call parameters
         if promptA is not None and isinstance(promptA, str):

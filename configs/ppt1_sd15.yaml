@@ -80,6 +80,8 @@ validation_data:
       mask: "cake_object_mask.png"
       prompt:
         - task: "object_inpainting" # text-guided object inpainting
+          prompt: ""
+          negative_prompt: ""
           promptA: ${task_prompt.object_inpainting.placeholder_tokens} A cake on the table
           promptB: ${task_prompt.object_inpainting.placeholder_tokens} A cake on the table
           tradeoff: 1.0
@@ -87,6 +89,8 @@ validation_data:
           negative_promptB: "worst quality, low quality, normal quality, bad quality, blurry"
 
         - task: "context inpainting" # text-free context inpainting
+          prompt: ""
+          negative_prompt: ""
           promptA: ${task_prompt.context_inpainting.placeholder_tokens}
           promptB: ${task_prompt.context_inpainting.placeholder_tokens}
           tradeoff: 1.0
@@ -94,6 +98,8 @@ validation_data:
           negative_promptB: "worst quality, low quality, normal quality, bad quality, blurry"
 
         - task: "object_removal" # context-guided object remove
+          prompt: ""
+          negative_prompt: ""
           promptA: ${task_prompt.context_inpainting.placeholder_tokens} empty blur scene
           promptB: ${task_prompt.context_inpainting.placeholder_tokens} empty blur scene
           tradeoff: 1.0
@@ -101,6 +107,8 @@ validation_data:
           negative_promptB: ${task_prompt.object_inpainting.placeholder_tokens} worst quality, low quality, normal quality, bad quality, blurry
 
         - task: "shape_inpainting" # shape-guided object inpainting
+          prompt: ""
+          negative_prompt: ""
           promptA: ${task_prompt.shape_inpainting.placeholder_tokens} A cake on the table
           promptB: ${task_prompt.context_inpainting.placeholder_tokens} A cake on the table
           tradeoff: 0.5
@@ -108,8 +116,10 @@ validation_data:
           negative_promptB: ${task_prompt.context_inpainting.placeholder_tokens} worst quality, low quality, normal quality, bad quality, blurry
 
         - task: "t2i" # context-guided object remove
+          prompt: ""
+          negative_prompt: ""
           promptA: ${task_prompt.context_inpainting.placeholder_tokens} a blue cake on the table, high-quality
           promptB: ${task_prompt.context_inpainting.placeholder_tokens} a blue cake on the table, high-quality
           tradeoff: 1.0
-          negative_promptA: worst quality, low quality, normal quality, bad quality, blurry
+          negative_promptA: worst quality, low quality, normal quality, bad quality, blunrry
           negative_promptB: worst quality, low quality, normal quality, bad quality, blurry

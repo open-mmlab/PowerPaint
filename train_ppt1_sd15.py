@@ -932,12 +932,6 @@ def main():
                 else:
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
 
-                # print(
-                #     f"weight_dtype: {weight_dtype}, "
-                #     f"embedding: {encoder_hidden_states.dtype}, "
-                #     f"text encoder: {accelerator.unwrap_model(text_encoder).dtype},"
-                #     f"unet: {accelerator.unwrap_model(unet).dtype},"
-                # )
                 # Predict the noise residual and compute loss
                 model_pred = unet(model_input, timesteps, encoder_hidden_states, return_dict=False)[0]
 
