@@ -30,8 +30,8 @@ TASK_PROMPT = {
             "negative_prompt": "",
             "promptA": "P_obj {}",
             "promptB": "P_obj {}",
-            "negative_promptA": "{}, worst quality, low quality, normal quality, bad quality, blurry",
-            "negative_promptB": "{}, worst quality, low quality, normal quality, bad quality, blurry",
+            "negative_promptA": "{}",
+            "negative_promptB": "{}",
         },
         "object-removal": {
             "prompt": "",

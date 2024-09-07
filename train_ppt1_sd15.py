@@ -326,7 +326,7 @@ def parse_args():
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="sd-model-finetuned",
+        default="runs/ppt1_sd15",
         help="The output directory where the model predictions and checkpoints will be written.",
     )
     parser.add_argument(
@@ -617,6 +617,10 @@ def main():
         weight_dtype = torch.bfloat16
         args.mixed_precision = accelerator.mixed_precision
 
+    # saving training configuration to output_dir
+    to_save_config = OmegaConf.create(vars(args))
+    OmegaConf.save(config=to_save_config, f=os.path.join(args.output_dir, "training_config.yaml"))
+
     # ==========================================
     # setting models: load scheduler, tokenizer and models.
     # ==========================================
@@ -823,7 +827,6 @@ def main():
 
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
-
     logger.info(f"***** Running training for {args.tracker_project_name} *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
     logger.info(f"  Num Epochs = {args.num_train_epochs}")

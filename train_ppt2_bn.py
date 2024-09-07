@@ -233,7 +233,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="powerpaint-model",
+        default="runs/ppt2_bn",
         help="The output directory where the model predictions and checkpoints will be written.",
     )
     parser.add_argument(
@@ -571,6 +571,10 @@ def main(args):
         weight_dtype = torch.float16
     elif accelerator.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
+
+    # saving training configuration to output_dir
+    to_save_config = OmegaConf.create(vars(args))
+    OmegaConf.save(config=to_save_config, f=os.path.join(args.output_dir, "training_config.yaml"))
 
     # initialize from pre-trained pipeline
     pipe = StableDiffusionPowerPaintBrushNetPipeline.from_pretrained(
