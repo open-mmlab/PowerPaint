@@ -602,6 +602,10 @@ def main():
         if args.output_dir is not None:
             os.makedirs(args.output_dir, exist_ok=True)
 
+        # saving training configuration to output_dir
+        to_save_config = OmegaConf.create(vars(args))
+        OmegaConf.save(config=to_save_config, f=os.path.join(args.output_dir, "training_config.yaml"))
+
         if args.push_to_hub:
             repo_id = create_repo(
                 repo_id=args.hub_model_id or Path(args.output_dir).name, exist_ok=True, token=args.hub_token
@@ -616,10 +620,6 @@ def main():
     elif accelerator.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
         args.mixed_precision = accelerator.mixed_precision
-
-    # saving training configuration to output_dir
-    to_save_config = OmegaConf.create(vars(args))
-    OmegaConf.save(config=to_save_config, f=os.path.join(args.output_dir, "training_config.yaml"))
 
     # ==========================================
     # setting models: load scheduler, tokenizer and models.

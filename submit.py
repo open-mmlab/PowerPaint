@@ -102,8 +102,8 @@ def main():
             "#!/bin/bash\n"
             f"#SBATCH --job-name={args.job_name}\n"
             "#SBATCH -p mm_lol\n"
-            f"#SBATCH --output={log_path}/O-%x.{MMDD_HHMM}.%j\n"
-            f"#SBATCH --error={log_path}/E-%x.{MMDD_HHMM}.%j\n"
+            f"#SBATCH --output={log_path}/O-%x.%j\n"
+            f"#SBATCH --error={log_path}/E-%x.%j\n"
             f"#SBATCH --nodes={n_node}                # number of nodes\n"
             "#SBATCH --ntasks-per-node=1              # number of MP tasks\n"
             f"#SBATCH --gres=gpu:{gpus_per_nodes}     # number of GPUs per node\n"
@@ -122,6 +122,7 @@ def main():
         cmd_string = " ".join(cmd_list)
         launcher = (
             "srun accelerate launch "
+            "--multi_gpu "
             f"--num_processes {gpus} "
             "--num_machines ${SLURM_NNODES} "
             "--machine_rank ${SLURM_NODEID} "
