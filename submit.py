@@ -128,8 +128,12 @@ def main():
 
         cmd_string = " ".join(cmd_list)
         print(args.x)
+        if args.x is not None:
+            srun_string = f"srun -x {' '.join(list(args.x))} "
+        else:
+            srun_string = "srun "
         launcher = (
-            f"srun -x {' '.join(list(args.x))} "
+            f"{srun_string} "
             "accelerate launch --multi_gpu "
             f"--num_processes {gpus} "
             "--num_machines ${SLURM_NNODES} "
