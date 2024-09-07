@@ -60,10 +60,9 @@ max_train_steps: 300e3           # max training steps
 train_batch_size: 6              # batch size per GPU
 dataloader_num_workers: 4
 
-checkpointing_steps: 10e3
-validation_steps: 10e3
-checkpoints_total_limit: 10
-
+checkpointing_steps: 1e3 #10e3
+validation_steps: 1e3 #10e3
+checkpoints_total_limit: 5
 resume_from_checkpoint: "latest"
 
 
