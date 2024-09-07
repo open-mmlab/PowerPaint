@@ -61,6 +61,13 @@ parser.add_argument(
     help="If true, will generate the script but do not run.",
 )
 
+parser.add_argument(
+    "-x",
+    nargs="+",
+    type=str,
+    help="exclude machine",
+)
+
 # args = parser.parse_args()
 args, cmd_list = parser.parse_known_args()
 
@@ -120,9 +127,10 @@ def main():
         )
 
         cmd_string = " ".join(cmd_list)
+        print(args.x)
         launcher = (
-            "srun accelerate launch "
-            "--multi_gpu "
+            f"srun -x {' '.join(list(args.x))} "
+            "accelerate launch --multi_gpu "
             f"--num_processes {gpus} "
             "--num_machines ${SLURM_NNODES} "
             "--machine_rank ${SLURM_NODEID} "
