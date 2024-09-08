@@ -30,22 +30,22 @@ TASK_PROMPT = {
             "negative_prompt": "",
             "promptA": "P_obj {}",
             "promptB": "P_obj {}",
-            "negative_promptA": "{}, worst quality, low quality, normal quality, bad quality, blurry",
-            "negative_promptB": "{}, worst quality, low quality, normal quality, bad quality, blurry",
+            "negative_promptA": "{}",
+            "negative_promptB": "{}",
         },
         "object-removal": {
             "prompt": "",
             "negative_prompt": "",
-            "promptA": "P_ctxt empty scene blur {}",
-            "promptB": "P_ctxt empty scene blur {}",
+            "promptA": "P_ctxt empty scene blur",
+            "promptB": "P_ctxt empty scene blur",
             "negative_promptA": "P_obj {}",
             "negative_promptB": "P_obj {}",
         },
         "image-outpainting": {
             "prompt": "",
             "negative_prompt": "",
-            "promptA": "P_ctxt empty scene blur {}",
-            "promptB": "P_ctxt empty scene blur {}",
+            "promptA": "P_ctxt empty scene blur, {}",
+            "promptB": "P_ctxt empty scene blur, {}",
             "negative_promptA": "P_obj {}",
             "negative_promptB": "P_obj {}",
         },
@@ -111,10 +111,9 @@ class PowerPaintController:
                 self.base_model_path,
                 unet=UNet2DConditionModel.from_pretrained(
                     self.pretrained_model_path,
-                    in_channels=9,
                     subfolder="unet",
-                    local_files_only=local_files_only,
                     torch_dtype=weight_dtype,
+                    local_files_only=local_files_only,
                 ).to("cuda"),
                 text_encoder=CLIPTextModel.from_pretrained(
                     self.pretrained_model_path,
@@ -132,12 +131,10 @@ class PowerPaintController:
                 self.base_model_path,
                 unet=UNet2DConditionModel.from_pretrained(
                     self.base_model_path,
-                    in_channels=4,
                     subfolder="unet",
-                    revision=None,
                     torch_dtype=weight_dtype,
                     local_files_only=local_files_only,
-                ),
+                ).to("cuda"),
                 brushnet=BrushNetModel.from_pretrained(
                     self.pretrained_model_path,
                     subfolder="brushnet",
@@ -151,8 +148,8 @@ class PowerPaintController:
                     local_files_only=local_files_only,
                 ),
                 torch_dtype=weight_dtype,
-                low_cpu_mem_usage=False,
                 safety_checker=None,
+                local_files_only=local_files_only,
             )
 
         # IMPORTANT:
@@ -213,6 +210,7 @@ class PowerPaintController:
         image = Image.fromarray((image * 255.0).clip(0, 255).astype(np.uint8))
         return image
 
+    # haven't validated the controlnet part
     def load_controlnet(self, control_type):
         if self.current_control != control_type:
             if control_type == "canny" or control_type is None:
@@ -236,6 +234,7 @@ class PowerPaintController:
             self.control_pipe = self.control_pipe.to("cuda")
             self.current_control = control_type
 
+    # haven't validated the controlnet part
     def predict_controlnet(
         self,
         input_image,
@@ -401,8 +400,8 @@ class PowerPaintController:
 
         # paste the inpainting results into original images
         result_paste = Image.composite(result, image, aug_mask.convert("L"))
-        dict_out = [input_image["image"].convert("RGB"), result_paste]
-        dict_res = [input_image["mask"].convert("RGB"), result]
+        dict_out = [masked_image, result_paste]
+        dict_res = [input_image["image"].convert("RGB"), input_image["mask"].convert("RGB"), result]
         return dict_out, dict_res
 
 

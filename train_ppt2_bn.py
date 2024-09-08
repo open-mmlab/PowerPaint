@@ -233,7 +233,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="powerpaint-model",
+        default="runs/ppt2_bn",
         help="The output directory where the model predictions and checkpoints will be written.",
     )
     parser.add_argument(
@@ -559,6 +559,10 @@ def main(args):
         if args.output_dir is not None:
             os.makedirs(args.output_dir, exist_ok=True)
 
+        # saving training configuration to output_dir
+        to_save_config = OmegaConf.create(vars(args))
+        OmegaConf.save(config=to_save_config, f=os.path.join(args.output_dir, "training_config.yaml"))
+
         if args.push_to_hub:
             repo_id = create_repo(
                 repo_id=args.hub_model_id or Path(args.output_dir).name, exist_ok=True, token=args.hub_token
@@ -599,7 +603,9 @@ def main(args):
     placeholder_tokens = [v.placeholder_tokens for k, v in args.task_prompt.items()]
     initializer_token = [v.initializer_token for k, v in args.task_prompt.items()]
     num_vectors_per_token = [v.num_vectors_per_token for k, v in args.task_prompt.items()]
-    pipe.add_tokens(placeholder_tokens, initializer_token, num_vectors_per_token, initialize_parameters=True)
+    placeholder_token_ids = pipe.add_tokens(
+        placeholder_tokens, initializer_token, num_vectors_per_token, initialize_parameters=True
+    )
 
     vae, tokenizer, unet, noise_scheduler = pipe.vae, pipe.tokenizer, pipe.unet, pipe.scheduler
     text_encoder, brushnet = pipe.text_encoder.to(torch.float32), pipe.brushnet.to(torch.float32)
@@ -830,6 +836,10 @@ def main(args):
     )
 
     image_logs = None
+
+    # keep original embeddings as reference
+    orig_embeds_params = accelerator.unwrap_model(text_encoder).get_input_embeddings().weight.data.clone()
+
     for _ in range(first_epoch, args.num_train_epochs):
         train_loss = 0.0
         for batch in train_dataloader:
@@ -935,6 +945,15 @@ def main(args):
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
+
+                # Let's make sure we don't update any embedding weights besides the newly added token
+                index_no_updates = torch.ones((len(tokenizer),), dtype=torch.bool)
+                index_no_updates[min(placeholder_token_ids) : max(placeholder_token_ids) + 1] = False
+
+                with torch.no_grad():
+                    accelerator.unwrap_model(text_encoder).get_input_embeddings().weight[index_no_updates] = (
+                        orig_embeds_params[index_no_updates]
+                    )
 
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:

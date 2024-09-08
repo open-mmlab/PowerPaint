@@ -1,5 +1,4 @@
 pretrained_model_name_or_path: "runwayml/stable-diffusion-v1-5"
-output_dir: "runs/ppt2_bn"
 tracker_project_name: "ppt2_bn"
 report_to: "tensorboard"
 
@@ -62,8 +61,7 @@ dataloader_num_workers: 4
 
 checkpointing_steps: 10e3
 validation_steps: 10e3
-checkpoints_total_limit: 10
-
+checkpoints_total_limit: 5
 resume_from_checkpoint: "latest"
 
 

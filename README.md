@@ -166,15 +166,25 @@ Basically, we recommend to use 0.5-0.6 for fitting degree when you want to gener
 
 2. Start training. We suggest using PowerPaint-V2 version, which is built upon BrushNet and requires smaller batch size for training. You can train it with the following command,
 ```shell
-accelerate launch --config_file configs/acc.yaml train_ppt2_bn.py --config configs/ppt2_bn.yaml
+# running on a single node
+accelerate launch --config_file configs/acc.yaml train_ppt2_bn.py --config configs/ppt2_bn.yaml --output_dir runs/ppt1_sd15
+
+# running on one node by slurm, e.g., 1 nodes with 8 gpus in total
+python submit.py --job-name ppt2_bn --gpus 8 train_ppt2_bn.py --config configs/ppt2_bn.yaml --output_dir runs/ppt2_bn
 ```
 where `configs/acc.yaml` is the configuration file for using accelerate, and `configs/ppt2_bn.yaml` is the configuration file for training PowerPaint-V2.
 
-
 PowerPaint-V1 version often requires much larger training batch size to converge (e.g., 1024). You can train it with the following command,
+
 ```shell
-accelerate launch --config_file configs/acc.yaml train_ppt1_sd15.py --config configs/ppt1_sd15.yaml
+# running on a single node
+accelerate launch --config_file configs/acc.yaml train_ppt1_sd15.py --config configs/ppt1_sd15.yaml --output_dir runs/ppt1_sd15 --gradient_accumulation_steps 2 --train_batch_size 64
+
+# running on two nodes by slurm, e.g., 2 nodes with 8 gpus in total
+python submit.py --job-name ppt1_sd15 --gpus 16 train_ppt1_sd15.py --config configs/ppt1_sd15.yaml --output_dir runs/ppt1_sd15 --train_batch_size 64
 ```
+where `configs/acc.yaml` is the configuration file for using accelerate, and `configs/ppt1_sd15.yaml` is the configuration file for training PowerPaint-V1.
+
 
 
 

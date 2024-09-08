@@ -1169,6 +1169,7 @@ class StableDiffusionPowerPaintBrushNetPipeline(
                 do_classifier_free_guidance=self.do_classifier_free_guidance,
                 guess_mode=guess_mode,
             )
+            # convert value range of mask to [0,1]
             original_mask = (original_mask.sum(1)[:, None, :, :] > 0).to(image.dtype)
             height, width = image.shape[-2:]
         else:
