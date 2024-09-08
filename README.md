@@ -178,10 +178,10 @@ PowerPaint-V1 version often requires much larger training batch size to converge
 
 ```shell
 # running on a single node
-accelerate launch --config_file configs/acc.yaml train_ppt1_sd15.py --config configs/ppt1_sd15.yaml --output_dir runs/ppt1_sd15 --gradient_accumulation_steps 2
+accelerate launch --config_file configs/acc.yaml train_ppt1_sd15.py --config configs/ppt1_sd15.yaml --output_dir runs/ppt1_sd15 --gradient_accumulation_steps 2 --train_batch_size 64
 
 # running on two nodes by slurm, e.g., 2 nodes with 8 gpus in total
-python submit.py --job-name ppt1_sd15 --gpus 16 train_ppt1_sd15.py --config configs/ppt1_sd15.yaml --output_dir runs/ppt1_sd15
+python submit.py --job-name ppt1_sd15 --gpus 16 train_ppt1_sd15.py --config configs/ppt1_sd15.yaml --output_dir runs/ppt1_sd15 --train_batch_size 64
 ```
 where `configs/acc.yaml` is the configuration file for using accelerate, and `configs/ppt1_sd15.yaml` is the configuration file for training PowerPaint-V1.
 
