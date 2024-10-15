@@ -37,25 +37,28 @@ def set_seed(seed):
 def add_task(prompt, negative_prompt, control_type, version):
     pos_prefix = neg_prefix = ""
     if control_type == "object-removal" or control_type == "image-outpainting":
+        pos_prefix = prompt
+        neg_prefix = negative_prompt
         if version == "ppt-v1":
-            pos_prefix = "empty scene blur " + prompt
-            neg_prefix = negative_prompt
+            pos_prefix = "empty scene blur " + pos_prefix
         promptA = pos_prefix + " P_ctxt"
         promptB = pos_prefix + " P_ctxt"
         negative_promptA = neg_prefix + " P_obj"
         negative_promptB = neg_prefix + " P_obj"
     elif control_type == "shape-guided":
+        pos_prefix = prompt
+        neg_prefix = negative_prompt
         if version == "ppt-v1":
-            pos_prefix = prompt
-            neg_prefix = negative_prompt + ", worst quality, low quality, normal quality, bad quality, blurry "
+            neg_prefix += ", worst quality, low quality, normal quality, bad quality, blurry "
         promptA = pos_prefix + " P_shape"
         promptB = pos_prefix + " P_ctxt"
         negative_promptA = neg_prefix + "P_shape"
         negative_promptB = neg_prefix + "P_ctxt"
     else:
+        pos_prefix = prompt
+        neg_prefix = negative_prompt
         if version == "ppt-v1":
-            pos_prefix = prompt
-            neg_prefix = negative_prompt + ", worst quality, low quality, normal quality, bad quality, blurry "
+            neg_prefix += ", worst quality, low quality, normal quality, bad quality, blurry "
         promptA = pos_prefix + " P_obj"
         promptB = pos_prefix + " P_obj"
         negative_promptA = neg_prefix + "P_obj"
