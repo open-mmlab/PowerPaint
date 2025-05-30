@@ -1,9 +1,10 @@
-accelerate
+accelerate==1.7.0
 controlnet-aux==0.0.3
 diffusers==0.27.0
-gradio==3.41.0
-mmengine
+gradio==3.43.0
+mmengine==0.10.7
 opencv-python
-torch
-torchvision
+torch==2.3.1
+torchvision==0.18.1
 transformers==4.28.0
+huggingface-hub==0.25.2

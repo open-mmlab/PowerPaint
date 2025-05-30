@@ -1,0 +1,21 @@
+services:
+  powerpaint:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: powerpaint
+    command: python app.py --version ppt-v2 --checkpoint_dir checkpoints/ppt-v2 --local_files_only
+    ports:
+      - "${MAPPED_HOST_PORT_POWERPAINT}:7860"
+    environment:
+      - GRADIO_SERVER_NAME=0.0.0.0
+    volumes:
+      - ~/models/powerpaint/checkpoints:/app/checkpoints
+      - ~/.cache:/root/.cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

@@ -52,7 +52,7 @@ PowerPaint is a high-quality versatile image inpainting model that supports text
 
 ```bash
 # Clone the Repository
-git clone git@github.com:open-mmlab/PowerPaint.git
+git clone https://github.com/davideuler/PowerPaint.git
 
 # Create Virtual Environment with Conda
 conda create --name ppt python=3.9
@@ -76,20 +76,21 @@ You can launch the Gradio interface for PowerPaint by running the following comm
 ```bash
 # Set up Git LFS
 conda install git-lfs
-git lfs install
+apt install git-lfs
 
 # Clone PowerPaint Model
-git lfs clone https://huggingface.co/JunhaoZhuang/PowerPaint-v1/ ./checkpoints/ppt-v1
+git clone https://huggingface.co/JunhaoZhuang/PowerPaint-v1/ ./checkpoints/ppt-v1
 
-python app.py --share
+python app.py 
 ```
 
 For the BrushNet-based PowerPaint, you can run the following command:
 ```bash
 # Clone PowerPaint Model
-git lfs clone https://huggingface.co/JunhaoZhuang/PowerPaint_v2/ ./checkpoints/ppt-v2
+git clone https://huggingface.co/JunhaoZhuang/PowerPaint_v2/ ./checkpoints/ppt-v2
+ln -sf `pwd`/checkpoints/ppt-v2/realisticVisionV60B1_v51VAE/unet/diffusion_pytorch_model-002.bin checkpoints/ppt-v2/realisticVisionV60B1_v51VAE/unet/diffusion_pytorch_model.bin
 
-python app.py --share --version ppt-v2 --checkpoint_dir checkpoints/ppt-v2
+python app.py --version ppt-v2 --checkpoint_dir checkpoints/ppt-v2 --local_files_only
 ```
 
 ### Text-Guided Object Inpainting
