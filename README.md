@@ -200,12 +200,12 @@ where `configs/acc.yaml` is the configuration file for using accelerate, and `co
 ## BibTeX
 
 ```
-@misc{zhuang2023task,
-      title={A Task is Worth One Word: Learning with Task Prompts for High-Quality Versatile Image Inpainting},
-      author={Junhao Zhuang and Yanhong Zeng and Wenran Liu and Chun Yuan and Kai Chen},
-      year={2023},
-      eprint={2312.03594},
-      archivePrefix={arXiv},
-      primaryClass={cs.CV}
+@inproceedings{zhuang2024task,
+  title={A task is worth one word: Learning with task prompts for high-quality versatile image inpainting},
+  author={Zhuang, Junhao and Zeng, Yanhong and Liu, Wenran and Yuan, Chun and Chen, Kai},
+  booktitle={European Conference on Computer Vision},
+  pages={195--211},
+  year={2024},
+  organization={Springer}
 }
 ```
