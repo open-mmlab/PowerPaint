@@ -1,0 +1,10 @@
+/mnt/disk1/aiotlab/hachi/data/OBJ_INS_FSC/train/374_b3
+/mnt/disk1/aiotlab/hachi/data/OBJ_INS_FSC/train/1328_b1
+/mnt/disk1/aiotlab/hachi/data/OBJ_INS_FSC/train/7036_b3
+/mnt/disk1/aiotlab/hachi/data/OBJ_INS_FSC/train/4686_b2
+/mnt/disk1/aiotlab/hachi/data/OBJ_INS_FSC/train/5121_b1
+/mnt/disk1/aiotlab/hachi/data/OBJ_INS_FSC/train/3076_b1
+/mnt/disk1/aiotlab/hachi/data/OBJ_INS_FSC/train/5230_b2
+/mnt/disk1/aiotlab/hachi/data/OBJ_INS_FSC/train/546_b3
+/mnt/disk1/aiotlab/hachi/data/OBJ_INS_FSC/train/4229_b1
+/mnt/disk1/aiotlab/hachi/data/OBJ_INS_FSC/train/3211_b3

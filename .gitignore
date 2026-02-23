@@ -13,9 +13,15 @@ data/
 *.pt
 *.pkl
 *.bin
-*.png
-*.jpg
+# *.png
+# *.jpg
 *.mp4
 *.gif
 
 debug*
+
+.env
+
+wandb/
+
+tmp*/

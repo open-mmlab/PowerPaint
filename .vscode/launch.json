@@ -1,0 +1,46 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug PowerPaint (Accelerate)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "accelerate.commands.launch",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "2"
+      },
+      "args": [
+        "--config_file", "configs/acc.yaml",
+        "train_idm_pp1_v2.py",
+        "--config", "configs/idm_pp1.yaml"
+      ],
+      "python": "/mnt/disk1/aiotlab/envs/powerpaint/bin/python"
+    }
+  ]
+}
+
+// {
+//     "version": "0.2.0",
+//     "configurations": [
+
+//         {
+//             "name": "Debug PowerPaint (CUDA:2)",
+//             "type": "debugpy",
+//             "request": "launch",
+//             "program": "${workspaceFolder}/test_ppt.py",
+//             "console": "integratedTerminal",
+//             "justMyCode": false,
+//             "args": [
+//                 "--config",
+//                 "configs/test.yaml"
+//             ],
+//             "env": {
+//                 "CUDA_VISIBLE_DEVICES": "2",
+//                 "CUDA_LAUNCH_BLOCKING": "1"
+//             }
+//         }
+//     ]
+// }
+
