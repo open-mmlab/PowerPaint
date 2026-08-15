@@ -165,7 +165,7 @@ If you have any issues, please feel free to [open issues](https://github.com/ope
 
 ## Contact Us
 
-**Junhao Zhuang**: zhuangjh23@mails.tsinghua.edu.cn
+**Junhao Zhuang**: zhuangjh23@tsinghua.org.cn
 
 **Yanhong Zeng**: zengyh1900@gmail.com
 
